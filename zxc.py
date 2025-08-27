@@ -7,4 +7,5 @@ done = False
 while not done:
     action = env.action_space.sample()  # hoặc policy.predict(obs)
     obs, reward, terminated, truncated, info = env.step(action)
-    env.render()  # <-- in ra map ASCII
+    env.render(mode="human")
+    done = terminated or truncated

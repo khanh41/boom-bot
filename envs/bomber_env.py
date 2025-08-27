@@ -1,5 +1,6 @@
 import numpy as np
 import gymnasium as gym
+import pygame
 from gymnasium import spaces
 from dataclasses import dataclass
 from typing import Tuple, Dict, Any
@@ -19,6 +20,10 @@ class BomberEnv(gym.Env):
     metadata = {"render_modes": []}
     def __init__(self, grid_size: int = 11, max_bombs: int = 3, max_steps: int = 300, seed: int | None = None):
         super().__init__()
+        self.cell_size = 32  # pixel mỗi ô
+        self.screen = None
+        self.clock = None
+
         self.rng = np.random.default_rng(seed)
         self.grid_size = grid_size
         self.max_bombs = max_bombs
@@ -198,3 +203,74 @@ class BomberEnv(gym.Env):
             e_map[ex,ey]=1.0
         H[5] = e_map
         return H
+
+    def render(self, mode="human"):
+        if mode != "human":
+            return
+
+        if self.screen is None:
+            pygame.init()
+            size = self.grid_size * self.cell_size
+            self.screen = pygame.display.set_mode((size, size))
+            pygame.display.set_caption("Bomberman AI")
+            self.clock = pygame.time.Clock()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+
+        self.screen.fill((0, 0, 0))
+
+        # Vẽ grid + walls + crates
+        for y in range(self.grid_size):
+            for x in range(self.grid_size):
+                rect = pygame.Rect(x*self.cell_size, y*self.cell_size, self.cell_size, self.cell_size)
+                color = (50, 50, 50)
+                if self.solid[y, x] == 1:
+                    color = (120, 120, 120)
+                elif self.crates[y, x] == 1:
+                    color = (180, 100, 50)
+                pygame.draw.rect(self.screen, color, rect)
+                pygame.draw.rect(self.screen, (30, 30, 30), rect, 1)
+
+        # Vẽ bom + flame
+        for b in self.bombs:  # b.x, b.y, b.timer, b.blast_radius
+            cx, cy = b.y*self.cell_size+16, b.x*self.cell_size+16
+            pygame.draw.circle(self.screen, (255, 0, 0), (cx, cy), 12)
+            # Vẽ flame tạm thời dựa trên blast_radius
+            radius = 1
+            flame_color = (255, 140, 0)
+            # 4 hướng
+            for dx in range(1, radius+1):
+                if b.x+dx < self.grid_size:
+                    pygame.draw.rect(self.screen, flame_color,
+                                     ((b.y)*self.cell_size, (b.x+dx)*self.cell_size, self.cell_size, self.cell_size))
+                if b.x-dx >= 0:
+                    pygame.draw.rect(self.screen, flame_color,
+                                     ((b.y)*self.cell_size, (b.x-dx)*self.cell_size, self.cell_size, self.cell_size))
+            for dy in range(1, radius+1):
+                if b.y+dy < self.grid_size:
+                    pygame.draw.rect(self.screen, flame_color,
+                                     ((b.y+dy)*self.cell_size, (b.x)*self.cell_size, self.cell_size, self.cell_size))
+                if b.y-dy >= 0:
+                    pygame.draw.rect(self.screen, flame_color,
+                                     ((b.y-dy)*self.cell_size, (b.x)*self.cell_size, self.cell_size, self.cell_size))
+
+        # Vẽ player
+        px, py = self.player_pos
+        pygame.draw.circle(self.screen, (0, 255, 0), (py*self.cell_size+16, px*self.cell_size+16), 14)
+
+        # Vẽ enemy
+        for idx, (ex, ey) in enumerate(self.enemies):
+            pygame.draw.circle(self.screen, (0, 0, 255), (ey*self.cell_size+16, ex*self.cell_size+16), 14)
+
+        # Vẽ item
+        for i in range(self.grid_size):
+            for j in range(self.grid_size):
+                if self.items[i, j] > 0:
+                    pygame.draw.rect(self.screen, (255, 255, 0),
+                                     (j*self.cell_size+10, i*self.cell_size+10, 12, 12))
+
+        pygame.display.flip()
+        self.clock.tick(4)
