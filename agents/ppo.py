@@ -3,37 +3,40 @@ import torch.nn as nn
 import torch.optim as optim
 from utils.nets import ConvNetSmall
 from utils.common import device
+import numpy as np
 
 class Actor(nn.Module):
-    def __init__(self, in_channels, n_actions):
+    def __init__(self, in_channels, n_actions, H=18, W=28):
         super().__init__()
-        self.backbone = ConvNetSmall(in_channels, 256)
-        self.pi = nn.Sequential(nn.ReLU(), nn.Linear(256, n_actions))
+        self.backbone = ConvNetSmall(in_channels, 256, H=H, W=W)
+        # use a separate small head for policy
+        self.policy_head = nn.Sequential(nn.ReLU(), nn.Linear(256, n_actions))
 
     def forward(self, x):
         z = self.backbone.features(x)
-        z = self.backbone.head[0](z)  # reuse first Linear to 256
+        # re-use head's first linear to compress to 256 if needed
+        z = self.backbone.head[0](z)  # Linear(flat,256)
         z = torch.relu(z)
-        logits = self.pi[1](z)
+        logits = self.policy_head[1](z) if False else self.policy_head(z)
         return logits
 
 class Critic(nn.Module):
-    def __init__(self, in_channels):
+    def __init__(self, in_channels, H=18, W=28):
         super().__init__()
-        self.backbone = ConvNetSmall(in_channels, 256)
+        self.backbone = ConvNetSmall(in_channels, 256, H=H, W=W)
         self.v = nn.Sequential(nn.ReLU(), nn.Linear(256, 1))
 
     def forward(self, x):
         z = self.backbone.features(x)
         z = self.backbone.head[0](z)
         z = torch.relu(z)
-        v = self.v[1](z)
+        v = self.v[1](z) if False else self.v(z).squeeze(-1)
         return v
 
 class PPOAgent:
-    def __init__(self, in_channels, n_actions, gamma=0.99, lam=0.95, clip=0.2, vf_coef=0.5, ent_coef=0.01, lr=3e-4, batch_size=4096, update_epochs=4):
-        self.actor = Actor(in_channels, n_actions).to(device())
-        self.critic = Critic(in_channels).to(device())
+    def __init__(self, in_channels, n_actions, H=18, W=28, gamma=0.99, lam=0.95, clip=0.2, vf_coef=0.5, ent_coef=0.01, lr=3e-4, batch_size=4096, update_epochs=4):
+        self.actor = Actor(in_channels, n_actions, H=H, W=W).to(device())
+        self.critic = Critic(in_channels, H=H, W=W).to(device())
         self.opt = optim.AdamW(list(self.actor.parameters()) + list(self.critic.parameters()), lr=lr)
         self.gamma, self.lam = gamma, lam
         self.clip, self.vf_coef, self.ent_coef = clip, vf_coef, ent_coef
@@ -42,7 +45,8 @@ class PPOAgent:
 
     def get_action(self, obs):
         with torch.no_grad():
-            x = torch.as_tensor(obs, dtype=torch.float32, device=device()).unsqueeze(0)
+            arr = np.array(obs, dtype=np.float32)
+            x = torch.as_tensor(arr, dtype=torch.float32, device=device()).unsqueeze(0)
             logits = self.actor(x)
             dist = torch.distributions.Categorical(logits=logits)
             a = dist.sample()

@@ -8,7 +8,7 @@ from utils.replay_buffer import ReplayBuffer
 from utils.common import device
 
 class DQNAgent:
-    def __init__(self, in_channels: int, n_actions: int, lr=1e-3, gamma=0.99, eps_start=1.0, eps_end=0.05, eps_decay=20000, buffer_size=200000, batch_size=64, target_sync=2000):
+    def __init__(self, in_channels: int, n_actions: int, env_h: int = 18, env_w: int = 28, lr=1e-3, gamma=0.99, eps_start=1.0, eps_end=0.05, eps_decay=20000, buffer_size=200000, batch_size=64, target_sync=2000):
         self.n_actions = n_actions
         self.gamma = gamma
         self.batch_size = batch_size
@@ -16,8 +16,8 @@ class DQNAgent:
         self.step_count = 0
         self.eps_start, self.eps_end, self.eps_decay = eps_start, eps_end, eps_decay
 
-        self.q = ConvNetSmall(in_channels, n_actions).to(device())
-        self.q_target = ConvNetSmall(in_channels, n_actions).to(device())
+        self.q = ConvNetSmall(in_channels, n_actions, H=env_h, W=env_w).to(device())
+        self.q_target = ConvNetSmall(in_channels, n_actions, H=env_h, W=env_w).to(device())
         self.q_target.load_state_dict(self.q.state_dict())
         self.optim = optim.AdamW(self.q.parameters(), lr=lr)
         self.replay = ReplayBuffer(buffer_size, obs_shape=None)
@@ -32,7 +32,8 @@ class DQNAgent:
         if (not greedy) and np.random.random() < self.epsilon():
             return np.random.randint(0, self.n_actions)
         with torch.no_grad():
-            x = torch.as_tensor(obs, dtype=torch.float32, device=device()).unsqueeze(0)
+            arr = np.array(obs, dtype=np.float32)
+            x = torch.as_tensor(arr, dtype=torch.float32, device=device()).unsqueeze(0)
             q = self.q(x)
             return int(torch.argmax(q, dim=1).item())
 

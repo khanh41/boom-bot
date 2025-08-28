@@ -55,3 +55,10 @@ python -m deploy.ws_inference --uri ws://localhost:8080/ws --policy checkpoints/
 - For PPO, tune: learning rate (3e-4), clip (0.1–0.2), batch size (8K–64K), GAE-lambda (0.95–0.98).
 
 Good luck & have fun! 🚀
+
+## Tournament integration notes
+
+- Example WebSocket server provided by organizers: `ws://171.251.51.213:5001`.
+- The server sends map tiles and positions quantized as integers multiplied by 100 (e.g. tile cell x=5 -> position p.x=500).
+- Edit `deploy/ws_inference.py::decode_server_state` to match exact server JSON if it differs. Ensure `--player-id` is passed to mark the 'self' channel when running inference:
+  python -m deploy.ws_inference --uri ws://171.251.51.213:5001 --policy checkpoints/dqn.pt --algo dqn --player-id <your-player-id>

@@ -13,15 +13,20 @@ class MLP(nn.Module):
         return self.net(x)
 
 class ConvNetSmall(nn.Module):
-    def __init__(self, in_channels: int, num_actions: int):
+    def __init__(self, in_channels: int, num_actions: int, H: int = 18, W: int = 28):
         super().__init__()
+        # small conv trunk
         self.features = nn.Sequential(
             nn.Conv2d(in_channels, 32, 3, padding=1), nn.ReLU(),
             nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(),
             nn.Flatten()
         )
+        # compute flattened size dynamically by passing a dummy tensor in constructor
+        with torch.no_grad():
+            dummy = torch.zeros(1, in_channels, H, W)
+            flat = self.features(dummy).shape[1]
         self.head = nn.Sequential(
-            nn.Linear(64*11*11, 256), nn.ReLU(),
+            nn.Linear(flat, 256), nn.ReLU(),
             nn.Linear(256, num_actions)
         )
 

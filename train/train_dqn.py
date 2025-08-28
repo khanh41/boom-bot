@@ -9,10 +9,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--episodes', type=int, default=2000)
     parser.add_argument('--save-path', type=str, default='checkpoints/dqn.pt')
-    parser.add_argument('--grid', type=int, default=11)
+    parser.add_argument('--grid-w', type=int, default=28)
+    parser.add_argument('--grid-h', type=int, default=18)
     args = parser.parse_args()
 
-    env = BomberEnv(grid_size=args.grid)
+    env = BomberEnv(grid_w=args.grid_w, grid_h=args.grid_h)
     agent = DQNAgent(in_channels=env.obs_shape[0], n_actions=ACTIONS)
     ensure_dir(args.save_path)
 
