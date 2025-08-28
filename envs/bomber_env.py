@@ -20,7 +20,14 @@ class BomberEnv(gym.Env):
     metadata = {"render_modes": []}
     def __init__(self, grid_size: int = 11, max_bombs: int = 3, max_steps: int = 300, seed: int | None = None):
         super().__init__()
-        self.cell_size = 32  # pixel mỗi ô
+        self.grid_size = grid_size
+        self.cell_size = 32
+        self.solid = np.zeros((grid_size, grid_size), dtype=int)  # tường
+        self.crates = np.zeros((grid_size, grid_size), dtype=int)
+        self.items = np.zeros((grid_size, grid_size), dtype=int)
+        self.player_pos = (1, 1)
+        self.enemies = [(9, 9)]
+        self.bombs = []
         self.screen = None
         self.clock = None
 
@@ -204,15 +211,12 @@ class BomberEnv(gym.Env):
         H[5] = e_map
         return H
 
-    def render(self, mode="human"):
-        if mode != "human":
-            return
-
+    def render(self):
         if self.screen is None:
             pygame.init()
             size = self.grid_size * self.cell_size
             self.screen = pygame.display.set_mode((size, size))
-            pygame.display.set_caption("Bomberman AI")
+            pygame.display.set_caption("Bomberman AI Viewer")
             self.clock = pygame.time.Clock()
 
         for event in pygame.event.get():
@@ -222,7 +226,7 @@ class BomberEnv(gym.Env):
 
         self.screen.fill((0, 0, 0))
 
-        # Vẽ grid + walls + crates
+        # Vẽ grid
         for y in range(self.grid_size):
             for x in range(self.grid_size):
                 rect = pygame.Rect(x*self.cell_size, y*self.cell_size, self.cell_size, self.cell_size)
@@ -234,35 +238,38 @@ class BomberEnv(gym.Env):
                 pygame.draw.rect(self.screen, color, rect)
                 pygame.draw.rect(self.screen, (30, 30, 30), rect, 1)
 
-        # Vẽ bom + flame
-        for b in self.bombs:  # b.x, b.y, b.timer, b.blast_radius
+        # Vẽ bom và flame
+        for b in self.bombs:
             cx, cy = b.y*self.cell_size+16, b.x*self.cell_size+16
+            # bom đỏ
             pygame.draw.circle(self.screen, (255, 0, 0), (cx, cy), 12)
-            # Vẽ flame tạm thời dựa trên blast_radius
-            radius = 1
+
+            # flame cam, mờ dần khi timer giảm
             flame_color = (255, 140, 0)
+            radius = 3
+
             # 4 hướng
             for dx in range(1, radius+1):
                 if b.x+dx < self.grid_size:
                     pygame.draw.rect(self.screen, flame_color,
-                                     ((b.y)*self.cell_size, (b.x+dx)*self.cell_size, self.cell_size, self.cell_size))
+                                     (b.y*self.cell_size, (b.x+dx)*self.cell_size, self.cell_size, self.cell_size))
                 if b.x-dx >= 0:
                     pygame.draw.rect(self.screen, flame_color,
-                                     ((b.y)*self.cell_size, (b.x-dx)*self.cell_size, self.cell_size, self.cell_size))
+                                     (b.y*self.cell_size, (b.x-dx)*self.cell_size, self.cell_size, self.cell_size))
             for dy in range(1, radius+1):
                 if b.y+dy < self.grid_size:
                     pygame.draw.rect(self.screen, flame_color,
-                                     ((b.y+dy)*self.cell_size, (b.x)*self.cell_size, self.cell_size, self.cell_size))
+                                     ((b.y+dy)*self.cell_size, b.x*self.cell_size, self.cell_size, self.cell_size))
                 if b.y-dy >= 0:
                     pygame.draw.rect(self.screen, flame_color,
-                                     ((b.y-dy)*self.cell_size, (b.x)*self.cell_size, self.cell_size, self.cell_size))
+                                     ((b.y-dy)*self.cell_size, b.x*self.cell_size, self.cell_size, self.cell_size))
 
         # Vẽ player
         px, py = self.player_pos
         pygame.draw.circle(self.screen, (0, 255, 0), (py*self.cell_size+16, px*self.cell_size+16), 14)
 
         # Vẽ enemy
-        for idx, (ex, ey) in enumerate(self.enemies):
+        for ex, ey in self.enemies:
             pygame.draw.circle(self.screen, (0, 0, 255), (ey*self.cell_size+16, ex*self.cell_size+16), 14)
 
         # Vẽ item
@@ -273,4 +280,4 @@ class BomberEnv(gym.Env):
                                      (j*self.cell_size+10, i*self.cell_size+10, 12, 12))
 
         pygame.display.flip()
-        self.clock.tick(4)
+        self.clock.tick(4)  # FPS
