@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import time
 import uuid
 
 import numpy as np
@@ -202,7 +203,7 @@ async def run(uri: str, policy_path: str, algo: str, player_id: str, game_id: st
                                         if cell:
                                             cx, cy = cell
                                             # guard bounds
-                                            H = obs.shape[1];
+                                            H = obs.shape[1]
                                             W = obs.shape[2]
                                             if 0 <= cy < H and 0 <= cx < W:
                                                 obs[4, cy, cx] = 1.0
@@ -242,8 +243,10 @@ async def run(uri: str, policy_path: str, algo: str, player_id: str, game_id: st
                             await ws.send(json.dumps(out))
                         else:
                             # alive -> normal control
+                            now = time.time()
                             a = select_action(obs)
                             out = encode_action_to_server(a)
+                            print(f"[ws_inference] action {a} sent in {time.time()-now:.3f}s")
                             await ws.send(json.dumps(out))
 
                     # handle other message types if needed (game_over...)
