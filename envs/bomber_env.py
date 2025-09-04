@@ -1,8 +1,10 @@
-import numpy as np
-import gymnasium as gym
-from gymnasium import spaces
 from dataclasses import dataclass
 from typing import Tuple, Dict, Any, List
+
+import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
+
 
 # Tile types
 class TileType:
@@ -43,7 +45,7 @@ class Bomb:
 class BomberEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, grid_w: int = 28, grid_h: int = 18, max_bombs: int = 1, max_steps: int = 300, seed: int | None = None):
+    def __init__(self, grid_w: int = 28, grid_h: int = 18, max_bombs: int = 1, max_steps: int = 3000, seed: int | None = None):
         super().__init__()
         self.rng = np.random.default_rng(seed)
         self.grid_w = grid_w
@@ -139,16 +141,17 @@ class BomberEnv(gym.Env):
         if action_key == 'b' and len(self.bombs) < self.max_bombs:
             if not any(b.x==x and b.y==y for b in self.bombs):
                 self.bombs.append(Bomb(x=x, y=y, fuse=180, owner=0))
+                reward += 0.2  # reward for placing bomb
 
         # enemy simple move
         self._enemy_act()
 
         # tick bombs
-        self._tick_bombs()
+        reward += self._tick_bombs()  # updated to return reward
 
         # item pickup
         px, py = self.player_pos
-        item = self.items[px,py]
+        item = self.items[px, py]
         if item != 0:
             if item == ItemType.BOMB_UP:
                 self.max_bombs = min(self.max_bombs + 1, 8)
@@ -156,14 +159,14 @@ class BomberEnv(gym.Env):
                 self.bomb_range = min(self.bomb_range + 1, 8)
             elif item == ItemType.SPEED_UP:
                 self.player_speed = min(self.player_speed + 0.25, 3.5)
-            self.items[px,py] = 0
-            reward += 2.0
+            self.items[px, py] = 0
+            reward += 5.0
 
         # survive bonus
         reward += 0.01
         if not self.alive:
             terminated = True
-            reward -= 5.0
+            reward -= 50.0
 
         obs = self._encode_obs()
         return obs, reward, terminated, truncated, {}
@@ -191,18 +194,20 @@ class BomberEnv(gym.Env):
                 break
 
     def _tick_bombs(self):
+        reward = 0.0
         for b in self.bombs:
             b.fuse -= 1
             b.is_exploding_soon = b.fuse <= 60
         new_bombs = []
         for b in self.bombs:
             if b.fuse <= 0:
-                self._explode(b.x, b.y, self.bomb_range)
+                reward += self._explode(b.x, b.y, self.bomb_range)
             else:
                 new_bombs.append(b)
         self.bombs = new_bombs
+
         # decay flames
-        self.flames = np.maximum(self.flames-1, 0)
+        self.flames = np.maximum(self.flames - 1, 0)
 
         # decrease invincibility/stun/dying ticks
         if self.invincible_ticks > 0: self.invincible_ticks -= 1
@@ -210,31 +215,45 @@ class BomberEnv(gym.Env):
         if self.dying_ticks > 0: self.dying_ticks -= 1
         if self.dying_ticks > 0: self.alive = False
 
+        return reward
+
     def _explode(self, x, y, rng):
-        self.flames[x,y] = 30
-        for dx,dy in EXPLOSION_DIRS:
-            for k in range(1, rng+1):
-                nx, ny = x+dx*k, y+dy*k
-                if nx<0 or ny<0 or nx>=self.grid_h or ny>=self.grid_w:
+        reward = 0.0
+        self.flames[x, y] = 30
+
+        # center damage (check enemy)
+        for idx, (ex, ey) in enumerate(self.enemies):
+            if (ex, ey) == (x, y) or self.flames[ex, ey] > 0:
+                reward += 20.0  # enemy killed
+                self.enemies[idx] = self._spawn_safe()  # respawn enemy
+
+        # bricks and explosion
+        for dx, dy in EXPLOSION_DIRS:
+            for k in range(1, rng + 1):
+                nx, ny = x + dx * k, y + dy * k
+                if nx < 0 or ny < 0 or nx >= self.grid_h or ny >= self.grid_w:
                     break
-                if self.solid[nx,ny] == TileType.WALL:
+                if self.solid[nx, ny] == TileType.WALL:
                     break
-                self.flames[nx,ny] = 30
-                if self.crates[nx,ny] == 1:
-                    self.crates[nx,ny] = 0
+                self.flames[nx, ny] = 30
+                if self.crates[nx, ny] == 1:
+                    self.crates[nx, ny] = 0
+                    reward += 1.0  # reward for destroying brick
                     r = self.rng.random()
                     if r < 0.15:
-                        self.items[nx,ny] = ItemType.BOMB_UP
+                        self.items[nx, ny] = ItemType.BOMB_UP
                     elif r < 0.3:
-                        self.items[nx,ny] = ItemType.POWER_UP
+                        self.items[nx, ny] = ItemType.POWER_UP
                     elif r < 0.4:
-                        self.items[nx,ny] = ItemType.SPEED_UP
+                        self.items[nx, ny] = ItemType.SPEED_UP
                     break
 
-        # damage check
+        # damage player
         px, py = self.player_pos
-        if (px, py) == (x, y) or self.flames[px,py] > 0:
+        if (px, py) == (x, y) or self.flames[px, py] > 0:
             self.alive = False
+
+        return reward
 
     def _encode_obs(self):
         H = np.zeros(self.obs_shape, dtype=np.float32)
