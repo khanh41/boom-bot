@@ -12,11 +12,13 @@ class TileType:
     WALL = 1
     BRICK = 2
 
+
 # Item types
 class ItemType:
     BOMB_UP = 1
     POWER_UP = 2
     SPEED_UP = 3
+
 
 # Discrete actions
 # 0: stay, 1: up, 2: down, 3: left, 4: right, 5: place_bomb
@@ -32,20 +34,23 @@ ACTION_TO_DIR = {
     'k': (0, 0),  # kick bomb (future)
 }
 
-EXPLOSION_DIRS = [(-1,0),(1,0),(0,-1),(0,1)]
+EXPLOSION_DIRS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
 
 @dataclass
 class Bomb:
     x: int
     y: int
-    fuse: int   # countdown ticks
+    fuse: int  # countdown ticks
     owner: int  # player id
     is_exploding_soon: bool = False
+
 
 class BomberEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, grid_w: int = 28, grid_h: int = 18, max_bombs: int = 1, max_steps: int = 3000, seed: int | None = None):
+    def __init__(self, grid_w: int = 28, grid_h: int = 18, max_bombs: int = 1, max_steps: int = 3000,
+                 seed: int | None = None):
         super().__init__()
         self.rng = np.random.default_rng(seed)
         self.grid_w = grid_w
@@ -75,22 +80,22 @@ class BomberEnv(gym.Env):
     def _gen_static_map(self):
         self.solid.fill(TileType.EMPTY)
         # outer walls
-        self.solid[0,:] = TileType.WALL
-        self.solid[-1,:] = TileType.WALL
-        self.solid[:,0] = TileType.WALL
-        self.solid[:,-1] = TileType.WALL
+        self.solid[0, :] = TileType.WALL
+        self.solid[-1, :] = TileType.WALL
+        self.solid[:, 0] = TileType.WALL
+        self.solid[:, -1] = TileType.WALL
 
         # internal pillars
-        for i in range(2, self.grid_h-1, 2):
-            for j in range(2, self.grid_w-1, 2):
-                self.solid[i,j] = TileType.WALL
+        for i in range(2, self.grid_h - 1, 2):
+            for j in range(2, self.grid_w - 1, 2):
+                self.solid[i, j] = TileType.WALL
 
         # crates
         self.crates = np.zeros_like(self.solid)
-        for i in range(1, self.grid_h-1):
-            for j in range(1, self.grid_w-1):
-                if self.solid[i,j] == TileType.EMPTY and self.rng.random() < 0.35:
-                    self.crates[i,j] = 1
+        for i in range(1, self.grid_h - 1):
+            for j in range(1, self.grid_w - 1):
+                if self.solid[i, j] == TileType.EMPTY and self.rng.random() < 0.35:
+                    self.crates[i, j] = 1
 
     def reset(self, seed: int | None = None, options: Dict[str, Any] | None = None):
         if seed is not None:
@@ -111,15 +116,15 @@ class BomberEnv(gym.Env):
         obs = self._encode_obs()
         return obs, {}
 
-    def _spawn_safe(self, exclude: List[Tuple[int,int]] | None = None) -> Tuple[int,int]:
+    def _spawn_safe(self, exclude: List[Tuple[int, int]] | None = None) -> Tuple[int, int]:
         exclude = exclude or []
         candidates = []
-        for i in range(1, self.grid_h-1):
-            for j in range(1, self.grid_w-1):
-                if self.solid[i,j] == TileType.EMPTY and self.crates[i,j]==0 and (i,j) not in exclude:
-                    candidates.append((i,j))
+        for i in range(1, self.grid_h - 1):
+            for j in range(1, self.grid_w - 1):
+                if self.solid[i, j] == TileType.EMPTY and self.crates[i, j] == 0 and (i, j) not in exclude:
+                    candidates.append((i, j))
         if not candidates:
-            return (1,1)
+            return (1, 1)
         return candidates[self.rng.integers(0, len(candidates))]
 
     def step(self, action: int):
@@ -133,32 +138,21 @@ class BomberEnv(gym.Env):
         x, y = self.player_pos
         nx, ny = x + dx, y + dy
 
-        moved = False
         # move
         if self._is_free(nx, ny):
-            if (nx, ny) != self.player_pos:
-                moved = True
-                reward += 0.01  # reward exploration
             self.player_pos = (nx, ny)
-
-        # idle penalty
-        if not moved and action_key not in ["b", "k"]:
-            reward -= 0.01
 
         # place bomb
         if action_key == 'b' and len(self.bombs) < self.max_bombs:
             if not any(b.x == x and b.y == y for b in self.bombs):
-                # check if enemy/crate is in blast radius → bonus
-                future_hit = self._will_hit_enemy_or_crate(x, y, self.bomb_range)
-                bonus = 0.05 if future_hit else 0.0
                 self.bombs.append(Bomb(x=x, y=y, fuse=180, owner=0))
-                reward += 0.2 + bonus
+                reward += 0.2  # reward for placing bomb
 
         # enemy simple move
         self._enemy_act()
 
         # tick bombs
-        reward += self._tick_bombs()
+        reward += self._tick_bombs()  # updated to return reward
 
         # item pickup
         px, py = self.player_pos
@@ -173,7 +167,7 @@ class BomberEnv(gym.Env):
             self.items[px, py] = 0
             reward += 5.0
 
-        # survival reward
+        # survive bonus
         reward += 0.01
         if not self.alive:
             terminated = True
@@ -182,91 +176,27 @@ class BomberEnv(gym.Env):
         obs = self._encode_obs()
         return obs, reward, terminated, truncated, {}
 
-    def _will_hit_enemy_or_crate(self, x, y, rng):
-        """Check if bomb placed at (x,y) can hit enemy or crate."""
-        # center
-        for (ex, ey) in self.enemies:
-            if (ex, ey) == (x, y):
-                return True
-        if self.crates[x, y] == 1:
-            return True
-
-        # directions
-        for dx, dy in EXPLOSION_DIRS:
-            for k in range(1, rng + 1):
-                nx, ny = x + dx * k, y + dy * k
-                if nx < 0 or ny < 0 or nx >= self.grid_h or ny >= self.grid_w:
-                    break
-                if self.solid[nx, ny] == TileType.WALL:
-                    break
-                if self.crates[nx, ny] == 1:
-                    return True
-                for (ex, ey) in self.enemies:
-                    if (ex, ey) == (nx, ny):
-                        return True
-        return False
-
     def _is_free(self, i, j):
         if i < 0 or j < 0 or i >= self.grid_h or j >= self.grid_w:
             return False
-        tile = self.solid[i,j]
+        tile = self.solid[i, j]
         if tile == TileType.WALL:
             return False
-        if tile == TileType.BRICK and self.crates[i,j]==1:
+        if tile == TileType.BRICK and self.crates[i, j] == 1:
             return False
-        if self.flames[i,j] > 0:
+        if self.flames[i, j] > 0:
             return False
         return True
 
     def _enemy_act(self):
         ex, ey = self.enemies[0]
-        px, py = self.player_pos
-
-        # 1. Check danger (flames or bombs about to explode)
-        danger_map = np.zeros_like(self.solid, dtype=np.int32)
-        for b in self.bombs:
-            if b.fuse <= 60:  # about to explode
-                danger_map[b.x, b.y] = 1
-                for dx, dy in EXPLOSION_DIRS:
-                    for k in range(1, self.bomb_range + 1):
-                        nx, ny = b.x + dx * k, b.y + dy * k
-                        if nx < 0 or ny < 0 or nx >= self.grid_h or ny >= self.grid_w:
-                            break
-                        if self.solid[nx, ny] == TileType.WALL:
-                            break
-                        danger_map[nx, ny] = 1
-
-        # if current position is dangerous → try escape
-        if danger_map[ex, ey] == 1:
-            safe_moves = []
-            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                nx, ny = ex + dx, ey + dy
-                if self._is_free(nx, ny) and danger_map[nx, ny] == 0:
-                    safe_moves.append((nx, ny))
-            if safe_moves:
-                self.enemies[0] = safe_moves[self.rng.integers(len(safe_moves))]
-                return
-
-        # 2. Try to place bomb if player is in range
-        for dx, dy in EXPLOSION_DIRS:
-            for k in range(1, self.bomb_range + 1):
-                if (ex + dx * k, ey + dy * k) == (px, py):
-                    # 50% chance to place bomb
-                    if self.rng.random() < 0.5 and not any(b.x == ex and b.y == ey for b in self.bombs):
-                        self.bombs.append(Bomb(x=ex, y=ey, fuse=180, owner=1))
-                    return
-
-        # 3. Otherwise, move towards player (greedy)
-        best_move = (0, 0)
-        best_dist = abs(ex - px) + abs(ey - py)
-        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        moves = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]
+        self.rng.shuffle(moves)
+        for dx, dy in moves:
             nx, ny = ex + dx, ey + dy
             if self._is_free(nx, ny):
-                d = abs(nx - px) + abs(ny - py)
-                if d < best_dist:
-                    best_dist = d
-                    best_move = (dx, dy)
-        self.enemies[0] = (ex + best_move[0], ey + best_move[1])
+                self.enemies[0] = (nx, ny)
+                break
 
     def _tick_bombs(self):
         reward = 0.0
@@ -333,23 +263,23 @@ class BomberEnv(gym.Env):
     def _encode_obs(self):
         H = np.zeros(self.obs_shape, dtype=np.float32)
         # tiles
-        H[0] = (self.solid==TileType.WALL).astype(np.float32) + 0.5*(self.crates==1).astype(np.float32)
+        H[0] = (self.solid == TileType.WALL).astype(np.float32) + 0.5 * (self.crates == 1).astype(np.float32)
         # bombs
         bomb_map = np.zeros_like(self.solid, dtype=np.float32)
         for b in self.bombs:
-            bomb_map[b.x,b.y] = max(b.fuse,0)/180.0
+            bomb_map[b.x, b.y] = max(b.fuse, 0) / 180.0
         H[1] = bomb_map
         # flames
-        H[2] = self.flames.astype(np.float32)/30.0
+        H[2] = self.flames.astype(np.float32) / 30.0
         # items
-        H[3] = (self.items>0).astype(np.float32)
+        H[3] = (self.items > 0).astype(np.float32)
         # self
         self_map = np.zeros_like(self.solid, dtype=np.float32)
         self_map[self.player_pos] = 1.0
         H[4] = self_map
         # enemies
         e_map = np.zeros_like(self.solid, dtype=np.float32)
-        for ex,ey in self.enemies:
-            e_map[ex,ey] = 1.0
+        for ex, ey in self.enemies:
+            e_map[ex, ey] = 1.0
         H[5] = e_map
         return H

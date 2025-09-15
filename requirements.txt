@@ -4,3 +4,4 @@ gymnasium>=0.29
 websockets>=11.0
 pydantic>=2.0
 tqdm>=4.66
+pettingzoo~=1.25.0
