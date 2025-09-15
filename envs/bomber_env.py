@@ -133,21 +133,32 @@ class BomberEnv(gym.Env):
         x, y = self.player_pos
         nx, ny = x + dx, y + dy
 
+        moved = False
         # move
         if self._is_free(nx, ny):
+            if (nx, ny) != self.player_pos:
+                moved = True
+                reward += 0.01  # reward exploration
             self.player_pos = (nx, ny)
+
+        # idle penalty
+        if not moved and action_key not in ["b", "k"]:
+            reward -= 0.01
 
         # place bomb
         if action_key == 'b' and len(self.bombs) < self.max_bombs:
-            if not any(b.x==x and b.y==y for b in self.bombs):
+            if not any(b.x == x and b.y == y for b in self.bombs):
+                # check if enemy/crate is in blast radius → bonus
+                future_hit = self._will_hit_enemy_or_crate(x, y, self.bomb_range)
+                bonus = 0.05 if future_hit else 0.0
                 self.bombs.append(Bomb(x=x, y=y, fuse=180, owner=0))
-                reward += 0.2  # reward for placing bomb
+                reward += 0.2 + bonus
 
         # enemy simple move
         self._enemy_act()
 
         # tick bombs
-        reward += self._tick_bombs()  # updated to return reward
+        reward += self._tick_bombs()
 
         # item pickup
         px, py = self.player_pos
@@ -162,7 +173,7 @@ class BomberEnv(gym.Env):
             self.items[px, py] = 0
             reward += 5.0
 
-        # survive bonus
+        # survival reward
         reward += 0.01
         if not self.alive:
             terminated = True
@@ -170,6 +181,30 @@ class BomberEnv(gym.Env):
 
         obs = self._encode_obs()
         return obs, reward, terminated, truncated, {}
+
+    def _will_hit_enemy_or_crate(self, x, y, rng):
+        """Check if bomb placed at (x,y) can hit enemy or crate."""
+        # center
+        for (ex, ey) in self.enemies:
+            if (ex, ey) == (x, y):
+                return True
+        if self.crates[x, y] == 1:
+            return True
+
+        # directions
+        for dx, dy in EXPLOSION_DIRS:
+            for k in range(1, rng + 1):
+                nx, ny = x + dx * k, y + dy * k
+                if nx < 0 or ny < 0 or nx >= self.grid_h or ny >= self.grid_w:
+                    break
+                if self.solid[nx, ny] == TileType.WALL:
+                    break
+                if self.crates[nx, ny] == 1:
+                    return True
+                for (ex, ey) in self.enemies:
+                    if (ex, ey) == (nx, ny):
+                        return True
+        return False
 
     def _is_free(self, i, j):
         if i < 0 or j < 0 or i >= self.grid_h or j >= self.grid_w:
@@ -185,13 +220,53 @@ class BomberEnv(gym.Env):
 
     def _enemy_act(self):
         ex, ey = self.enemies[0]
-        moves = [(0,0),(-1,0),(1,0),(0,-1),(0,1)]
-        self.rng.shuffle(moves)
-        for dx,dy in moves:
-            nx, ny = ex+dx, ey+dy
+        px, py = self.player_pos
+
+        # 1. Check danger (flames or bombs about to explode)
+        danger_map = np.zeros_like(self.solid, dtype=np.int32)
+        for b in self.bombs:
+            if b.fuse <= 60:  # about to explode
+                danger_map[b.x, b.y] = 1
+                for dx, dy in EXPLOSION_DIRS:
+                    for k in range(1, self.bomb_range + 1):
+                        nx, ny = b.x + dx * k, b.y + dy * k
+                        if nx < 0 or ny < 0 or nx >= self.grid_h or ny >= self.grid_w:
+                            break
+                        if self.solid[nx, ny] == TileType.WALL:
+                            break
+                        danger_map[nx, ny] = 1
+
+        # if current position is dangerous → try escape
+        if danger_map[ex, ey] == 1:
+            safe_moves = []
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = ex + dx, ey + dy
+                if self._is_free(nx, ny) and danger_map[nx, ny] == 0:
+                    safe_moves.append((nx, ny))
+            if safe_moves:
+                self.enemies[0] = safe_moves[self.rng.integers(len(safe_moves))]
+                return
+
+        # 2. Try to place bomb if player is in range
+        for dx, dy in EXPLOSION_DIRS:
+            for k in range(1, self.bomb_range + 1):
+                if (ex + dx * k, ey + dy * k) == (px, py):
+                    # 50% chance to place bomb
+                    if self.rng.random() < 0.5 and not any(b.x == ex and b.y == ey for b in self.bombs):
+                        self.bombs.append(Bomb(x=ex, y=ey, fuse=180, owner=1))
+                    return
+
+        # 3. Otherwise, move towards player (greedy)
+        best_move = (0, 0)
+        best_dist = abs(ex - px) + abs(ey - py)
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nx, ny = ex + dx, ey + dy
             if self._is_free(nx, ny):
-                self.enemies[0] = (nx, ny)
-                break
+                d = abs(nx - px) + abs(ny - py)
+                if d < best_dist:
+                    best_dist = d
+                    best_move = (dx, dy)
+        self.enemies[0] = (ex + best_move[0], ey + best_move[1])
 
     def _tick_bombs(self):
         reward = 0.0
