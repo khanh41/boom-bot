@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
 
+import cv2
 import numpy as np
 from gymnasium import spaces
 from pettingzoo import ParallelEnv
@@ -90,7 +91,7 @@ class MultiBomberEnv(ParallelEnv):
             ItemType.SPEED_UP: 0.1
         }
 
-        self.obs_shape = (6, self.grid_h, self.grid_w)
+        self.obs_shape = (self.grid_h, self.grid_w, 6)
 
         self.agents = [f"player_{i}" for i in range(4)]
         self.possible_agents = self.agents[:]
@@ -113,7 +114,12 @@ class MultiBomberEnv(ParallelEnv):
         self.steps = 0
 
         # Define observation and action spaces for Gymnasium compatibility
-        self._observation_space = spaces.Box(low=0, high=1, shape=self.obs_shape, dtype=np.float32)
+        self._observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=self.obs_shape,
+            dtype=np.uint8
+        )
         self._action_space = spaces.Discrete(ACTIONS)
 
     def observation_space(self, agent: str):
@@ -178,7 +184,7 @@ class MultiBomberEnv(ParallelEnv):
 
                 if act != 0:
                     # Reset timer for this agent
-                    rewards[a] += 0.5
+                    rewards[a] += 5
                     self.agent_timers[a] = 0
                 else:
                     rewards[a] -= 100  # small penalty for idling
@@ -245,16 +251,16 @@ class MultiBomberEnv(ParallelEnv):
                             other_p.status = "alive"
                             other_p.dying_ticks = 0
                             other_p.invincibility_ticks = self.invincibility_ticks
-                            rewards[a] += 10.0
-                            rewards[other_a] += 15.0
+                            rewards[a] += 100.0
+                            rewards[other_a] += 150.0
                         else:  # Kill enemy
                             other_p.status = "dead"
                             other_p.alive = False
                             other_p.dying_ticks = 0
-                            rewards[a] += 20.0
+                            rewards[a] += 200.0
                             for team_a in self.agents:
                                 if self.teams[team_a] == self.teams[a] and team_a != a:
-                                    rewards[team_a] += 10.0
+                                    rewards[team_a] += 100.0
 
         # Team rewards for deaths
         for a in dead_this_step:
@@ -262,7 +268,7 @@ class MultiBomberEnv(ParallelEnv):
             opp_team = "A" if team == "B" else "B"
             for other_a in self.agents:
                 if self.teams[other_a] == opp_team and self.players[other_a].status == "alive":
-                    rewards[other_a] += 30.0
+                    rewards[other_a] += 300.0
 
         # Survival bonus
         for a, player in self.players.items():
@@ -278,7 +284,7 @@ class MultiBomberEnv(ParallelEnv):
         return obs, rewards, terminations, truncations, infos
 
     def _encode_obs(self, agent_id):
-        H = np.zeros(self.obs_shape, dtype=np.float32)
+        H = np.zeros((6, self.grid_h, self.grid_w), dtype=np.float32)
 
         # Map: walls (1.0), bricks (0.5), empty (0.0)
         H[0] = (self.map == TileType.WALL).astype(np.float32) + 0.5 * (self.map == TileType.BRICK).astype(np.float32)
@@ -305,7 +311,9 @@ class MultiBomberEnv(ParallelEnv):
                 x, y = self.players[a].position
                 H[5, y, x] = 1.0 if self.teams[a] != self.teams[agent_id] else 0.5
 
-        return H
+        # Chuyển sang (H, W, C), scale về [0,255]
+        obs = np.transpose(H, (1, 2, 0)) * 255.0
+        return obs.astype(np.uint8)
 
     def _gen_random_map(self):
         grid = np.zeros((self.grid_h, self.grid_w), dtype=np.int32)
@@ -360,7 +368,7 @@ class MultiBomberEnv(ParallelEnv):
                 self.flames[ny, nx] = self.explosion_lifetime
                 if self.map[ny, nx] == TileType.BRICK:
                     self.map[ny, nx] = TileType.EMPTY
-                    rewards[bomb.owner] += 10.0
+                    rewards[bomb.owner] += 1000.0
                     r = self.rng.random()
                     if r < self.item_spawn_chance[ItemType.BOMB_UP]:
                         self.items[ny, nx] = ItemType.BOMB_UP
