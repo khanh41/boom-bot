@@ -11,8 +11,8 @@ NUM_AGENTS = 4
 ACTIONS = 7  # per-agent action space size (0..6)
 JOINT_ACTION_SIZE = ACTIONS ** NUM_AGENTS  # 7^4 = 2401
 ENV_PER_CPU = 1
-N_ENVS = 4  # number of parallel envs for data collection (adjust to CPU)
-TOTAL_TIMESTEPS = 200_000
+N_ENVS = 8  # number of parallel envs for data collection (adjust to CPU)
+TOTAL_TIMESTEPS = 2_000_000
 SEED_BASE = 1000
 
 
@@ -79,7 +79,10 @@ class PettingZooParallelToGymWrapper(gymnasium.Env):
         # cộng dồn reward cho episode
         self.episode_reward += reward
 
-        terminated = bool(all(terminations.values()))
+        terminated = any(
+            all(self.env.players[a].status == "dead" for a in [p for p, t in self.env.teams.items() if t == team])
+            for team in ["A", "B"]
+        )
         truncated = bool(any(truncations.values()))
 
         obs_flat = self._obs_dict_to_flat(obs_dict)
@@ -123,7 +126,7 @@ class PettingZooParallelToGymWrapper(gymnasium.Env):
 # === Utility to create env instances for SubprocVecEnv ===
 def make_wrapped_env(seed: int = 0):
     def _init():
-        base = MultiBomberEnv(grid_w=28, grid_h=18, max_steps=3000, seed=seed)
+        base = MultiBomberEnv(grid_w=28, grid_h=18, max_steps=1000, seed=seed)
         wrapped = PettingZooParallelToGymWrapper(base)
         return wrapped
 
@@ -156,7 +159,8 @@ if __name__ == "__main__":
         n_epochs=10,
         clip_range=0.2,
         policy_kwargs=policy_kwargs,
-        tensorboard_log="./multi_bomber_tensorboard/"
+        tensorboard_log="./multi_bomber_tensorboard/",
+        device="cuda"
     )
 
     model.learn(total_timesteps=TOTAL_TIMESTEPS)
