@@ -135,7 +135,7 @@ class MultiBomberEnv(ParallelEnv):
         self.bombs.clear()
         self.flames.fill(0)
         self.items.fill(0)
-        self.map = self._gen_static_map()
+        self.map = self._gen_random_map()
         self.players = {
             "player_0": PlayerState((1, 1), True, "alive", 0.5, 1, 0, 1, 0, 0, False, 0, 0),
             "player_1": PlayerState((self.grid_w - 2, self.grid_h - 2), True, "alive", 0.5, 1, 0, 1, 0, 0, False, 0, 0),
@@ -161,15 +161,14 @@ class MultiBomberEnv(ParallelEnv):
                 if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
                     self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, a))
                     player.bombs_placed += 1
-                    rewards[a] += 0.2
-            elif act == 6:  # Kick bomb
-                for b in self.bombs:
-                    if b.x == x and b.y == y and not b.is_moving:
-                        pass
-                        # b.is_moving = True
-                        # b.move_direction = ACTION_TO_DIR[act] if act in [1, 2, 3, 4] else (0, 0)
-                        # b.move_distance_left = 3.0  # Arbitrary distance for sliding
-                        # rewards[a] += 0.5
+                    rewards[a] += 0.5
+            # elif act == 6:  # Kick bomb
+            #     for b in self.bombs:
+            #         if b.x == x and b.y == y and not b.is_moving:
+            #             b.is_moving = True
+            #             b.move_direction = ACTION_TO_DIR[act] if act in [1, 2, 3, 4] else (0, 0)
+            #             b.move_distance_left = 3.0  # Arbitrary distance for sliding
+            #             rewards[a] += 0.5
             else:  # Move
                 dx, dy = ACTION_TO_DIR[act]
                 nx, ny = x + dx, y + dy
@@ -177,12 +176,12 @@ class MultiBomberEnv(ParallelEnv):
                     player.position = (nx, ny)
 
         # Update bomb movements
-        for b in self.bombs:
-            if b.is_moving:
-                b.move_distance_left -= self.bomb_slide_speed * (self.tick_rate / 1000.0)
-                if b.move_distance_left <= 0:
-                    b.is_moving = False
-                    b.x, b.y = round(b.x), round(b.y)
+        # for b in self.bombs:
+        #     if b.is_moving:
+        #         b.move_distance_left -= self.bomb_slide_speed * (self.tick_rate / 1000.0)
+        #         if b.move_distance_left <= 0:
+        #             b.is_moving = False
+        #             b.x, b.y = round(b.x), round(b.y)
 
         # Tick bombs
         new_bombs = []
@@ -214,7 +213,7 @@ class MultiBomberEnv(ParallelEnv):
                     player.speed = min(player.speed + 0.25, 3.5)
                 self.items[y, x] = 0
                 player.score += 5
-                rewards[a] += 5.0
+                rewards[a] += 10.0
 
         # Process ghost mode and team interactions
         dead_this_step = []
@@ -262,15 +261,13 @@ class MultiBomberEnv(ParallelEnv):
             team = self.teams[a]
             opp_team = "A" if team == "B" else "B"
             for other_a in self.agents:
-                if self.teams[other_a] == team:
-                    rewards[other_a] -= 30.0
-                elif self.teams[other_a] == opp_team and self.players[other_a].status == "alive":
+                if self.teams[other_a] == opp_team and self.players[other_a].status == "alive":
                     rewards[other_a] += 30.0
 
         # Survival bonus
         for a, player in self.players.items():
             if player.status == "alive":
-                rewards[a] += 0.01
+                rewards[a] += 0.1
 
         terminations = {a: self.players[a].status == "dead" for a in self.agents}
         truncations = {a: self.steps >= self.max_steps for a in self.agents}
@@ -280,42 +277,63 @@ class MultiBomberEnv(ParallelEnv):
 
     def _encode_obs(self, agent_id):
         H = np.zeros(self.obs_shape, dtype=np.float32)
-        # Map: walls/bricks
+
+        # Map: walls (1.0), bricks (0.5), empty (0.0)
         H[0] = (self.map == TileType.WALL).astype(np.float32) + 0.5 * (self.map == TileType.BRICK).astype(np.float32)
-        # Bombs
+
+        # Bombs: b.y and b.x are the coordinates of the bomb
+        # b.timer / self.bomb_fuse_ticks gives a value between 0-1, 1 means just placed, 0 means about to explode
         for b in self.bombs:
             H[1, b.y, b.x] = b.timer / self.bomb_fuse_ticks
+
         # Flames
         H[2] = np.clip(self.flames / self.explosion_lifetime, 0, 1)
+
         # Items
         H[3] = (self.items > 0).astype(np.float32)
+
         # Self
         if self.players[agent_id].status != "dead":
             x, y = self.players[agent_id].position
             H[4, y, x] = 1.0
+
         # Others
         for a in self.agents:
             if a != agent_id and self.players[a].status != "dead":
                 x, y = self.players[a].position
                 H[5, y, x] = 1.0 if self.teams[a] != self.teams[agent_id] else 0.5
+
         return H
 
-    def _gen_static_map(self):
+    def _gen_random_map(self):
         grid = np.zeros((self.grid_h, self.grid_w), dtype=np.int32)
-        # Outer walls
-        grid[0, :] = grid[-1, :] = grid[:, 0] = grid[:, -1] = TileType.WALL
-        # Pillars
-        for y in range(2, self.grid_h - 1, 2):
-            for x in range(2, self.grid_w - 1, 2):
-                grid[y, x] = TileType.WALL
-        # Bricks
+
+        # Wall and Bricks random
         for y in range(1, self.grid_h - 1):
             for x in range(1, self.grid_w - 1):
-                if grid[y, x] == TileType.EMPTY and self.rng.random() < 0.35:
+                # 40% empty, 30% brick, 30% wall
+                r = self.rng.random()
+                if r < 0.4:
+                    grid[y, x] = TileType.EMPTY
+                elif r < 0.7:
                     grid[y, x] = TileType.BRICK
+                else:
+                    grid[y, x] = TileType.WALL
+
+        # Outer walls
+        grid[0, :] = grid[-1, :] = grid[:, 0] = grid[:, -1] = TileType.WALL
+
         # Clear spawn points
-        for x, y in [(1, 1), (self.grid_w - 2, self.grid_h - 2), (1, self.grid_h - 2), (self.grid_w - 2, 1)]:
+        spawn_points = [(1, 1), (self.grid_w - 2, self.grid_h - 2), (1, self.grid_h - 2), (self.grid_w - 2, 1)]
+        for x, y in spawn_points:
             grid[y, x] = TileType.EMPTY
+            # Clear surrounding tiles to ensure agents are not trapped
+            for dy in [-1, 0, 1]:
+                for dx in [-1, 0, 1]:
+                    ny, nx = y + dy, x + dx
+                    if 0 < ny < self.grid_h - 1 and 0 < nx < self.grid_w - 1:
+                        grid[ny, nx] = TileType.EMPTY
+
         return grid
 
     def _is_free(self, x, y):
@@ -340,7 +358,7 @@ class MultiBomberEnv(ParallelEnv):
                 self.flames[ny, nx] = self.explosion_lifetime
                 if self.map[ny, nx] == TileType.BRICK:
                     self.map[ny, nx] = TileType.EMPTY
-                    rewards[bomb.owner] += 1.0
+                    rewards[bomb.owner] += 10.0
                     r = self.rng.random()
                     if r < self.item_spawn_chance[ItemType.BOMB_UP]:
                         self.items[ny, nx] = ItemType.BOMB_UP

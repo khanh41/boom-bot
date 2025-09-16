@@ -1,12 +1,9 @@
-# train_centralized_ppo.py
 import gymnasium
 import numpy as np
 from gymnasium import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
-# Import your PettingZoo ParallelEnv implementation
-# Make sure envs.multi_bomber_env.MultiBomberEnv is importable (python path)
 from envs.multi_bomber_env import MultiBomberEnv
 
 # === HYPERPARAMS ===
@@ -48,7 +45,7 @@ class PettingZooParallelToGymWrapper(gymnasium.Env):
         self.action_space = spaces.Discrete(ACTIONS ** self.num_agents)
         self.reward_mode = reward_mode
         self.last_obs = None
-        self.step_count = 0
+        self.episode_reward = 0
 
     def _obs_dict_to_flat(self, obs_dict):
         arrs = []
@@ -61,12 +58,10 @@ class PettingZooParallelToGymWrapper(gymnasium.Env):
         obs_dict, infos = self.env.reset(**kwargs)
         flat = self._obs_dict_to_flat(obs_dict)
         self.last_obs = flat
-        self.step_count = 0
         self.episode_reward = 0
         return flat, infos
 
     def step(self, action):
-        self.step_count += 1
         idx = int(np.asarray(action).item())
         multi = np.unravel_index(idx, tuple([ACTIONS] * self.num_agents))
         action_dict = {agent: int(act) for agent, act in zip(self.agents, multi)}
@@ -81,7 +76,9 @@ class PettingZooParallelToGymWrapper(gymnasium.Env):
         else:
             reward = float(sum(rewards_dict.values()))
 
-        # SB3 cần terminated + truncated riêng
+        # cộng dồn reward cho episode
+        self.episode_reward += reward
+
         terminated = bool(all(terminations.values()))
         truncated = bool(any(truncations.values()))
 
@@ -100,8 +97,8 @@ class PettingZooParallelToGymWrapper(gymnasium.Env):
         # Nếu kết thúc episode thì thêm log cho SB3
         if done:
             info["episode"] = {
-                "r": reward,  # tổng reward trong episode
-                "l": self.step_count,
+                "r": self.episode_reward,  # tổng reward cả episode
+                "l": self.env.steps,
             }
 
         return obs_flat, reward, terminated, truncated, info
