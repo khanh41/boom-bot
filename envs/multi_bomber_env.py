@@ -181,7 +181,7 @@ class MultiBomberEnv(ParallelEnv):
                     rewards[a] += 0.5
                     self.agent_timers[a] = 0
                 else:
-                    rewards[a] -= 0.01  # small penalty for idling
+                    rewards[a] -= 100  # small penalty for idling
 
         # --- Bomb updates (every tick) ---
         new_bombs = []
@@ -267,7 +267,7 @@ class MultiBomberEnv(ParallelEnv):
         # Survival bonus
         for a, player in self.players.items():
             if player.status == "alive":
-                rewards[a] += 0.01
+                rewards[a] += 0.0001
 
         # Terminations & truncations
         terminations = {a: self.players[a].status == "dead" for a in self.agents}
