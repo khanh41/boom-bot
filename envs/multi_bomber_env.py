@@ -99,6 +99,7 @@ class MultiBomberEnv(ParallelEnv):
             "player_2": "B",
             "player_3": "B"
         }
+        self.render_mode = "ansi"  # Define render_mode attribute
 
         # States
         self.players: Dict[str, PlayerState] = {}
@@ -338,30 +339,32 @@ class MultiBomberEnv(ParallelEnv):
                     break
         return rewards
 
-    def render(self, mode="ansi"):
-        if mode != "ansi":
-            raise NotImplementedError("Only 'ansi' render mode is supported.")
-        render_map = np.full((self.grid_h, self.grid_w), ' ', dtype='<U2')
-        for y in range(self.grid_h):
-            for x in range(self.grid_w):
-                if self.map[y, x] == TileType.WALL:
-                    render_map[y, x] = 'W'
-                elif self.map[y, x] == TileType.BRICK:
-                    render_map[y, x] = 'B'
-                elif self.flames[y, x] > 0:
-                    render_map[y, x] = 'F'
-                elif self.items[y, x] == ItemType.BOMB_UP:
-                    render_map[y, x] = '+'
-                elif self.items[y, x] == ItemType.POWER_UP:
-                    render_map[y, x] = '*'
-                elif self.items[y, x] == ItemType.SPEED_UP:
-                    render_map[y, x] = 'S'
-        for b in self.bombs:
-            render_map[b.y, b.x] = 'O' if not b.is_exploding_soon else 'X'
-        for a, player in self.players.items():
-            if player.status != "dead":
-                symbol = a[-1]
-                if player.status == "dying":
-                    symbol = symbol.lower()
-                render_map[player.position[1], player.position[0]] = symbol
-        print("\n".join("".join(row) for row in render_map))
+    def render(self):
+        if self.render_mode == "ansi":
+            grid = np.full((self.grid_h, self.grid_w), '.', dtype=str)
+            # Draw walls and bricks
+            grid[self.map == TileType.WALL] = '#'
+            grid[self.map == TileType.BRICK] = '%'
+            # Draw bombs
+            for b in self.bombs:
+                grid[b.y, b.x] = 'B'
+            # Draw flames
+            grid[self.flames > 0] = '*'
+            # Draw items
+            for y in range(self.grid_h):
+                for x in range(self.grid_w):
+                    if self.items[y, x] == ItemType.BOMB_UP:
+                        grid[y, x] = 'b'
+                    elif self.items[y, x] == ItemType.POWER_UP:
+                        grid[y, x] = 'p'
+                    elif self.items[y, x] == ItemType.SPEED_UP:
+                        grid[y, x] = 's'
+            # Draw players
+            for a, player in self.players.items():
+                if player.status != "dead":
+                    x, y = player.position
+                    grid[y, x] = a[7]  # Player number (0, 1, 2, 3)
+            # Convert to string
+            return '\n'.join(''.join(row) for row in grid)
+        else:
+            raise ValueError(f"Unsupported render mode: {self.render_mode}")
