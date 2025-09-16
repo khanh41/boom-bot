@@ -100,6 +100,8 @@ class MultiBomberEnv(ParallelEnv):
             "player_2": "B",
             "player_3": "B"
         }
+        self.agent_timers = {a: 0 for a in self.agents}
+
         self.render_mode = "ansi"  # Define render_mode attribute
 
         # States
@@ -142,6 +144,7 @@ class MultiBomberEnv(ParallelEnv):
             "player_2": PlayerState((1, self.grid_h - 2), True, "alive", 0.5, 1, 0, 1, 0, 0, False, 0, 0),
             "player_3": PlayerState((self.grid_w - 2, 1), True, "alive", 0.5, 1, 0, 1, 0, 0, False, 0, 0)
         }
+        self.agent_timers = {a: 0 for a in self.agents}
         obs = {a: self._encode_obs(a) for a in self.agents}
         infos = {a: {} for a in self.agents}
         return obs, infos
@@ -150,40 +153,35 @@ class MultiBomberEnv(ParallelEnv):
         self.steps += 1
         rewards = {a: 0.0 for a in self.agents}
 
-        # Process movements and bomb actions
-        for a, act in actions.items():
-            player = self.players[a]
+        # --- Process agent actions if their tick elapsed ---
+        for a, player in self.players.items():
             if player.status != "alive":
                 continue
 
-            x, y = player.position
-            if act == 5:  # Place bomb
-                if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
-                    self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, a))
-                    player.bombs_placed += 1
+            # Increase agent timer
+            self.agent_timers[a] += self.tick_rate
+
+            if self.agent_timers[a] >= self.player_tick_rate:
+                # Agent can act
+                act = actions.get(a, 0)  # default stay
+                x, y = player.position
+
+                if act == 5:  # Place bomb
+                    if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
+                        self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, a))
+                        player.bombs_placed += 1
+                else:  # Move
+                    dx, dy = ACTION_TO_DIR[act]
+                    nx, ny = x + dx, y + dy
+                    if self._is_free(nx, ny):
+                        player.position = (nx, ny)
+
+                if act != 0:
+                    # Reset timer for this agent
                     rewards[a] += 0.5
-            # elif act == 6:  # Kick bomb
-            #     for b in self.bombs:
-            #         if b.x == x and b.y == y and not b.is_moving:
-            #             b.is_moving = True
-            #             b.move_direction = ACTION_TO_DIR[act] if act in [1, 2, 3, 4] else (0, 0)
-            #             b.move_distance_left = 3.0  # Arbitrary distance for sliding
-            #             rewards[a] += 0.5
-            else:  # Move
-                dx, dy = ACTION_TO_DIR[act]
-                nx, ny = x + dx, y + dy
-                if self._is_free(nx, ny):
-                    player.position = (nx, ny)
+                    self.agent_timers[a] = 0
 
-        # Update bomb movements
-        # for b in self.bombs:
-        #     if b.is_moving:
-        #         b.move_distance_left -= self.bomb_slide_speed * (self.tick_rate / 1000.0)
-        #         if b.move_distance_left <= 0:
-        #             b.is_moving = False
-        #             b.x, b.y = round(b.x), round(b.y)
-
-        # Tick bombs
+        # --- Bomb updates (every tick) ---
         new_bombs = []
         for b in self.bombs:
             b.timer -= 1
@@ -198,7 +196,7 @@ class MultiBomberEnv(ParallelEnv):
         # Decay flames
         self.flames = np.maximum(self.flames - 1, 0)
 
-        # Process item pickups
+        # Process item pickups (every tick)
         for a, player in self.players.items():
             if player.status != "alive":
                 continue
@@ -215,7 +213,7 @@ class MultiBomberEnv(ParallelEnv):
                 player.score += 5
                 rewards[a] += 10.0
 
-        # Process ghost mode and team interactions
+        # --- Check flames / dying ---
         dead_this_step = []
         for a, player in self.players.items():
             if player.status == "alive" and self.flames[player.position[1], player.position[0]] > 0:
@@ -223,7 +221,7 @@ class MultiBomberEnv(ParallelEnv):
                 player.dying_ticks = self.dying_time // self.tick_rate
                 dead_this_step.append(a)
 
-        # Update dying and invincibility timers
+        # Update dying, invincibility, stun timers
         for a, player in self.players.items():
             if player.dying_ticks > 0:
                 player.dying_ticks -= 1
@@ -236,11 +234,11 @@ class MultiBomberEnv(ParallelEnv):
                 player.stun_ticks -= 1
                 player.is_stunned = player.stun_ticks > 0
 
-        # Ghost interactions (rescue/kill)
+        # Ghost mode interactions (rescue / kill)
         for a, player in self.players.items():
             if player.status == "dead":
                 for other_a, other_p in self.players.items():
-                    if other_p.status == "dying" and other_p.position == player.position:
+                    if other_a != a and other_p.status == "dying" and other_p.position == player.position:
                         if self.teams[a] == self.teams[other_a]:  # Rescue teammate
                             other_p.status = "alive"
                             other_p.dying_ticks = 0
@@ -269,10 +267,12 @@ class MultiBomberEnv(ParallelEnv):
             if player.status == "alive":
                 rewards[a] += 0.1
 
+        # Terminations & truncations
         terminations = {a: self.players[a].status == "dead" for a in self.agents}
         truncations = {a: self.steps >= self.max_steps for a in self.agents}
         obs = {a: self._encode_obs(a) for a in self.agents}
         infos = {a: {"score": self.players[a].score} for a in self.agents}
+
         return obs, rewards, terminations, truncations, infos
 
     def _encode_obs(self, agent_id):
@@ -311,11 +311,11 @@ class MultiBomberEnv(ParallelEnv):
         # Wall and Bricks random
         for y in range(1, self.grid_h - 1):
             for x in range(1, self.grid_w - 1):
-                # 40% empty, 30% brick, 30% wall
+                # 60% empty, 30% brick, 10% wall
                 r = self.rng.random()
-                if r < 0.4:
+                if r < 0.6:
                     grid[y, x] = TileType.EMPTY
-                elif r < 0.7:
+                elif r < 0.9:
                     grid[y, x] = TileType.BRICK
                 else:
                     grid[y, x] = TileType.WALL
