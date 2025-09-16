@@ -14,7 +14,7 @@ env = ss.normalize_obs_v0(env, env_min=0, env_max=1)  # Normalize observations
 vec_env = ss.pettingzoo_env_to_vec_env_v1(env)
 
 # Vectorize multiple instances for faster training
-vec_env = ss.concat_vec_envs_v1(vec_env, 8, num_cpus=4, base_class='stable_baselines3')
+vec_env = ss.concat_vec_envs_v1(vec_env, 8, num_cpus=0, base_class='stable_baselines3')
 
 # Frame stacking for temporal information
 vec_env = VecFrameStack(vec_env, n_stack=4)

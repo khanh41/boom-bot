@@ -70,6 +70,7 @@ class MultiBomberEnv(ParallelEnv):
     metadata = {"render_modes": ["ansi"], "name": "multi_bomber_team_v1"}
 
     def __init__(self, grid_w: int = 28, grid_h: int = 18, max_steps: int = 3000, seed: int | None = None):
+        super().__init__()
         self.rng = np.random.default_rng(seed)
         self.grid_w = grid_w
         self.grid_h = grid_h
@@ -109,13 +110,23 @@ class MultiBomberEnv(ParallelEnv):
         self.map = None
         self.steps = 0
 
+        # Define observation and action spaces for Gymnasium compatibility
+        self._observation_space = spaces.Box(low=0, high=1, shape=self.obs_shape, dtype=np.float32)
+        self._action_space = spaces.Discrete(ACTIONS)
+
+    def observation_space(self, agent: str):
+        return self._observation_space
+
+    def action_space(self, agent: str):
+        return self._action_space
+
     @property
     def observation_spaces(self):
-        return {a: spaces.Box(low=0, high=1, shape=self.obs_shape, dtype=np.float32) for a in self.agents}
+        return {a: self.observation_space(a) for a in self.agents}
 
     @property
     def action_spaces(self):
-        return {a: spaces.Discrete(ACTIONS) for a in self.agents}
+        return {a: self.action_space(a) for a in self.agents}
 
     def reset(self, seed=None, options=None):
         if seed is not None:
