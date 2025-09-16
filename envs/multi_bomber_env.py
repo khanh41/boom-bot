@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
 
-import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 from pettingzoo import ParallelEnv
@@ -208,7 +207,7 @@ class MultiBomberEnv(ParallelEnv):
                 x, y = self.pos[a]
                 H[5, y, x] = 1.0
 
-        return H.flatten()
+        return H
 
     def _gen_static_map(self):
         grid = np.zeros((self.grid_h, self.grid_w), dtype=np.int32)
@@ -247,29 +246,3 @@ class MultiBomberEnv(ParallelEnv):
                 if self.map[ny, nx] == TileType.BRICK:
                     self.map[ny, nx] = TileType.EMPTY
                     break
-
-
-# ---------- Wrapper for SB3 ----------
-class SingleAgentWrapper(gym.Env):
-    def __init__(self, env: MultiBomberEnv, learning_agent="player_0"):
-        super().__init__()
-        self.env = env
-        self.learning_agent = learning_agent
-        self.observation_space = self.env.observation_spaces[self.learning_agent]
-        self.action_space = self.env.action_spaces[self.learning_agent]
-
-    def reset(self, **kwargs):
-        obs, infos = self.env.reset()
-        return obs[self.learning_agent], infos[self.learning_agent]
-
-    def step(self, action):
-        actions = {a: self.env.action_spaces[a].sample() for a in self.env.agents}
-        actions[self.learning_agent] = action
-        obs, rewards, terms, truncs, infos = self.env.step(actions)
-        return (
-            obs[self.learning_agent],
-            rewards[self.learning_agent],
-            terms[self.learning_agent],
-            truncs[self.learning_agent],
-            infos[self.learning_agent],
-        )
