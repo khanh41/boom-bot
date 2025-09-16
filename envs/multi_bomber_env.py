@@ -154,7 +154,7 @@ class MultiBomberEnv(ParallelEnv):
                 for b in self.bombs:
                     if b.x == x and b.y == y and not b.is_moving:
                         b.is_moving = True
-                        b.move_direction = ACTION_TO_DIR[actions[a]] if actions[a] in [1, 2, 3, 4] else (0, 0)
+                        b.move_direction = ACTION_TO_DIR[act] if act in [1, 2, 3, 4] else (0, 0)
                         b.move_distance_left = 3.0  # Arbitrary distance for sliding
                         rewards[a] += 0.5
             else:  # Move
