@@ -43,9 +43,9 @@ class SelfPlayWrapper(gymnasium.Env):
         done = terminations[agent] or truncations[agent]
         info = infos[agent]
 
-        # self.current_agent_idx = (self.current_agent_idx + 1) % self.num_agents
-        # next_agent = self.agents[self.current_agent_idx]
-        # self.last_obs = obs_dict[next_agent]
+        self.current_agent_idx = (self.current_agent_idx + 1) % self.num_agents
+        next_agent = self.agents[self.current_agent_idx]
+        self.last_obs = obs_dict[next_agent]
 
         # done = False
         if all(terminations.values()) or all(truncations.values()):
@@ -187,7 +187,7 @@ class ImpalaCNN(BaseFeaturesExtractor):
 
 # === MAIN ===
 if __name__ == "__main__":
-    N_ENVS = 1
+    N_ENVS = 8
     TOTAL_TIMESTEPS = 2_000_000
 
     env_fns = [make_selfplay_env(seed=2000 + i) for i in range(N_ENVS)]

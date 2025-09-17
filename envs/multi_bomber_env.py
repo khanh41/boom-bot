@@ -186,21 +186,28 @@ class MultiBomberEnv(ParallelEnv):
                         player.bombs_placed += 1
                         rewards[a] += 1.0
                 elif act == 0:
-                    rewards[a] -= 0.01  # small penalty for idling
+                    rewards[a] -= 0.05  # small penalty for idling
                 else:  # Move
                     dx, dy = ACTION_TO_DIR[act]
                     nx, ny = x + dx, y + dy
                     # TODO: Add speed
                     # nx, ny = x + dx * speed, y + dy * speed
                     if self._is_free(nx, ny):
+                        # exploration bonus if new cell
+                        if not hasattr(player, "visited"):
+                            player.visited = set()
+                        if (nx, ny) not in player.visited:
+                            rewards[a] += 0.2
+                            player.visited.add((nx, ny))
+
                         player.position = (nx, ny)
-                        rewards[a] += 0.1
+                        rewards[a] += 0.05
                         # Reset timer for this agent
                         self.agent_timers[a] = 0
                     else:
-                        rewards[a] -= 1.0  # penalty for hitting wall/brick/bomb
+                        rewards[a] -= 0.2  # penalty for hitting wall/brick/bomb
 
-        # --- Bomb updates (every tick) ---
+        # --- Bomb updates ---
         new_bombs = []
         for b in self.bombs:
             b.timer -= 1
@@ -215,7 +222,7 @@ class MultiBomberEnv(ParallelEnv):
         # Decay flames
         self.flames = np.maximum(self.flames - 1, 0)
 
-        # Process item pickups (every tick)
+        # Process item pickups
         for a, player in self.players.items():
             if player.status != "alive":
                 continue
@@ -240,9 +247,9 @@ class MultiBomberEnv(ParallelEnv):
                 player.status = "dying"
                 player.dying_ticks = self.dying_time // self.tick_rate
                 dead_this_step.append(a)
-                rewards[a] -= 10.0
+                rewards[a] -= 5.0
 
-        # Update dying, invincibility, stun timers
+        # Update timers
         for a, player in self.players.items():
             if player.dying_ticks > 0:
                 player.dying_ticks -= 1
@@ -388,7 +395,7 @@ class MultiBomberEnv(ParallelEnv):
                 if self.map[ny, nx] == TileType.BRICK:
                     print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
                     self.map[ny, nx] = TileType.EMPTY
-                    rewards[bomb.owner] += 2.0
+                    rewards[bomb.owner] += 5.0
                     r = self.rng.random()
                     if r < self.item_spawn_chance[ItemType.BOMB_UP]:
                         self.items[ny, nx] = ItemType.BOMB_UP
