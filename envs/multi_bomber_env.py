@@ -193,19 +193,26 @@ class MultiBomberEnv(ParallelEnv):
                     # TODO: Add speed
                     # nx, ny = x + dx * speed, y + dy * speed
                     if self._is_free(nx, ny):
-                        # exploration bonus if new cell
-                        if not hasattr(player, "visited"):
-                            player.visited = set()
-                        if (nx, ny) not in player.visited:
-                            rewards[a] += 0.2
-                            player.visited.add((nx, ny))
+                        # check danger
+                        if self._is_danger(nx, ny):
+                            rewards[a] -= 1.0  # phạt mạnh nếu bước vào vùng nguy hiểm
+                        else:
+                            # exploration bonus
+                            if not hasattr(player, "visited"):
+                                player.visited = set()
+                            if (nx, ny) not in player.visited:
+                                rewards[a] += 0.2
+                                player.visited.add((nx, ny))
 
-                        player.position = (nx, ny)
-                        rewards[a] += 0.05
-                        # Reset timer for this agent
-                        self.agent_timers[a] = 0
+                            # nếu né khỏi vùng nguy hiểm (từ ô cũ ra an toàn)
+                            if self._is_danger(int(x), int(y)) and not self._is_danger(nx, ny):
+                                rewards[a] += 0.5  # thưởng thoát chết
+
+                            player.position = (nx, ny)
+                            rewards[a] += 0.05
+                            self.agent_timers[a] = 0
                     else:
-                        rewards[a] -= 0.2  # penalty for hitting wall/brick/bomb
+                        rewards[a] -= 0.2
 
         # --- Bomb updates ---
         new_bombs = []
@@ -236,9 +243,9 @@ class MultiBomberEnv(ParallelEnv):
                 elif item_type == ItemType.SPEED_UP:
                     player.speed = min(player.speed + 0.25, 3.5)
                 self.items[y, x] = 0
-                player.score += 5
+                player.score += 20
                 print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
-                rewards[a] += 10.0
+                rewards[a] += 20.0
 
         # --- Check flames / dying ---
         dead_this_step = []
@@ -378,6 +385,32 @@ class MultiBomberEnv(ParallelEnv):
         if any(b.x == x and b.y == y for b in self.bombs):
             return False
         return True
+
+    def _is_danger(self, x, y):
+        # Nếu trong flame thì chắc chắn nguy hiểm
+        if self.flames[y, x] > 0:
+            return True
+
+        # Nếu trong vùng bom sắp nổ
+        for b in self.bombs:
+            if not b.is_exploding_soon:
+                continue
+            # bom chính
+            if b.x == x and b.y == y:
+                return True
+            # vùng ảnh hưởng theo power
+            for dx, dy in EXPLOSION_DIRS:
+                for i in range(1, b.power + 1):
+                    nx, ny = b.x + dx * i, b.y + dy * i
+                    if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
+                        break
+                    if self.map[ny, nx] == TileType.WALL:
+                        break
+                    if nx == x and ny == y:
+                        return True
+                    if self.map[ny, nx] == TileType.BRICK:
+                        break
+        return False
 
     def _explode(self, bomb: Bomb, rewards: Dict[str, float]):
         x, y, p = bomb.x, bomb.y, bomb.power
