@@ -1,13 +1,16 @@
 import pygame
 import time
+import torch
 
 from envs.multi_bomber_env import MultiBomberEnv
+from stable_baselines3 import PPO
 
 # --- Pygame init ---
 pygame.init()
 CELL_SIZE = 20
 FONT_SIZE = 20
 font = pygame.font.SysFont("Courier", FONT_SIZE)
+
 
 # --- Draw env từ ASCII render ---
 def draw_env(env, screen):
@@ -21,8 +24,12 @@ def draw_env(env, screen):
     pygame.display.flip()
 
 
-def evaluate(episodes=3, fps=5):
-    env = MultiBomberEnv(grid_w=15, grid_h=11, max_steps=200)
+def evaluate(model_path="multi_bomber_selfplay_ppo_finetuned.zip", episodes=3, fps=5):
+    # Load model
+    print(f"🔄 Loading model from {model_path}")
+    model = PPO.load(model_path, device="cuda" if torch.cuda.is_available() else "cpu")
+
+    env = MultiBomberEnv(max_steps=1000000)
 
     for ep in range(episodes):
         obs, infos = env.reset()
@@ -47,8 +54,11 @@ def evaluate(episodes=3, fps=5):
                     pygame.quit()
                     return
 
-            # random action cho mỗi agent (thay bằng policy của bạn)
-            actions = {a: env.action_space(a).sample() for a in env.agents}
+            # lấy action từ policy đã train
+            actions = {}
+            for agent in env.agents:
+                action, _ = model.predict(obs[agent], deterministic=True)
+                actions[agent] = int(action)
 
             obs, rewards, terminations, truncations, infos = env.step(actions)
             for a, r in rewards.items():
