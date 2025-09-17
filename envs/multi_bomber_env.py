@@ -167,7 +167,7 @@ class MultiBomberEnv(ParallelEnv):
             # Increase agent timer
             self.agent_timers[a] += self.tick_rate
 
-            if self.agent_timers[a] >= self.player_tick_rate:
+            if self.agent_timers[a] >= self.player_tick_rate or True:
                 # Agent can act
                 act = actions.get(a, 0)  # default stay
                 x, y = player.position

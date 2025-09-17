@@ -137,6 +137,54 @@ class SmallCNN(BaseFeaturesExtractor):
         return self.linear(self.cnn(observations.permute(0, 3, 1, 2)))
 
 
+class ResidualBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.ReLU(),
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(channels, channels, 3, padding=1),
+        )
+
+    def forward(self, x):
+        return x + self.block(x)
+
+
+class ImpalaCNN(BaseFeaturesExtractor):
+    def __init__(self, observation_space: spaces.Box, features_dim: int = 256):
+        super().__init__(observation_space, features_dim)
+        n_input_channels = observation_space.shape[2]
+
+        def conv_block(in_ch, out_ch):
+            return nn.Sequential(
+                nn.Conv2d(in_ch, out_ch, 3, stride=1, padding=1),
+                nn.MaxPool2d(3, stride=2, padding=1),
+                ResidualBlock(out_ch),
+                ResidualBlock(out_ch),
+            )
+
+        self.cnn = nn.Sequential(
+            conv_block(n_input_channels, 16),
+            conv_block(16, 32),
+            conv_block(32, 32),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+
+        with th.no_grad():
+            sample = th.as_tensor(observation_space.sample()[None]).float().permute(0, 3, 1, 2)
+            n_flatten = self.cnn(sample).shape[1]
+
+        self.linear = nn.Sequential(
+            nn.Linear(n_flatten, features_dim),
+            nn.ReLU()
+        )
+
+    def forward(self, obs: th.Tensor) -> th.Tensor:
+        return self.linear(self.cnn(obs.permute(0, 3, 1, 2)))
+
+
 # === MAIN ===
 if __name__ == "__main__":
     N_ENVS = 1
@@ -156,20 +204,20 @@ if __name__ == "__main__":
     except Exception:
         print("⚠️ No previous model found, training from scratch.")
         policy_kwargs = dict(
-            features_extractor_class=SmallCNN,
-            features_extractor_kwargs=dict(features_dim=256)
+            features_extractor_class=ImpalaCNN,
+            features_extractor_kwargs=dict(features_dim=512)
         )
 
         model = PPO(
             "CnnPolicy",
             vec_env,
-            verbose=0,
+            verbose=1,
             learning_rate=3e-4,
             batch_size=256,
             n_epochs=10,
             clip_range=0.2,
             policy_kwargs=policy_kwargs,
-            tensorboard_log="./multi_bomber_selfplay_tensorboard/",
+            # tensorboard_log="./multi_bomber_selfplay_tensorboard/",
             device="cuda"
         )
 
