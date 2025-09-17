@@ -198,7 +198,7 @@ class MultiBomberEnv(ParallelEnv):
                         # Reset timer for this agent
                         self.agent_timers[a] = 0
                     else:
-                        rewards[a] -= 1000.0  # penalty for hitting wall/brick/bomb
+                        rewards[a] -= 1.0  # penalty for hitting wall/brick/bomb
 
         # --- Bomb updates (every tick) ---
         new_bombs = []
@@ -240,21 +240,21 @@ class MultiBomberEnv(ParallelEnv):
                 player.status = "dying"
                 player.dying_ticks = self.dying_time // self.tick_rate
                 dead_this_step.append(a)
-                print(f"💀 {a} is dying!")
-                rewards[a] -= 50.0
+                rewards[a] -= 10.0
 
         # Update dying, invincibility, stun timers
-        # for a, player in self.players.items():
-        #     if player.dying_ticks > 0:
-        #         player.dying_ticks -= 1
-        #         if player.dying_ticks <= 0:
-        #             player.status = "dead"
-        #             player.alive = False
-        #     if player.invincibility_ticks > 0:
-        #         player.invincibility_ticks -= 1
-        #     if player.stun_ticks > 0:
-        #         player.stun_ticks -= 1
-        #         player.is_stunned = player.stun_ticks > 0
+        for a, player in self.players.items():
+            if player.dying_ticks > 0:
+                player.dying_ticks -= 1
+                if player.dying_ticks <= 0:
+                    print(f"☠️ {a} is dead!")
+                    player.status = "dead"
+                    player.alive = False
+            if player.invincibility_ticks > 0:
+                player.invincibility_ticks -= 1
+            if player.stun_ticks > 0:
+                player.stun_ticks -= 1
+                player.is_stunned = player.stun_ticks > 0
 
         # Ghost mode interactions (rescue / kill)
         # for a, player in self.players.items():
@@ -276,18 +276,21 @@ class MultiBomberEnv(ParallelEnv):
         #                         if self.teams[team_a] == self.teams[a] and team_a != a:
         #                             rewards[team_a] += 100.0
 
-        # Team rewards for deaths
-        for a in dead_this_step:
-            team = self.teams[a]
-            opp_team = "A" if team == "B" else "B"
-            for other_a in self.agents:
-                if self.teams[other_a] == opp_team and self.players[other_a].status == "alive":
-                    rewards[other_a] += 300.0
+        # # Team rewards for deaths
+        # for a in dead_this_step:
+        #     team = self.teams[a]
+        #     opp_team = "A" if team == "B" else "B"
+        #     for other_a in self.agents:
+        #         if self.players[other_a].status == "alive":
+        #             if self.teams[other_a] == opp_team:
+        #                 rewards[other_a] += 30.0
+        #             else:
+        #                 rewards[other_a] -= 50.0
 
         # Survival bonus
         for a, player in self.players.items():
             if player.status == "alive":
-                rewards[a] += 0.001
+                rewards[a] += 0.00001
 
         # Terminations & truncations
         terminations = {a: self.players[a].status == "dead" for a in self.agents}
