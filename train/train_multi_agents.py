@@ -47,7 +47,7 @@ class SelfPlayWrapper(gymnasium.Env):
         next_agent = self.agents[self.current_agent_idx]
         self.last_obs = obs_dict[next_agent]
 
-        # done = False
+        done = False
         if all(terminations.values()) or all(truncations.values()):
             obs_dict, infos = self.env.reset()
             self.current_agent_idx = 0
@@ -187,8 +187,8 @@ class ImpalaCNN(BaseFeaturesExtractor):
 
 # === MAIN ===
 if __name__ == "__main__":
-    N_ENVS = 1
-    TOTAL_TIMESTEPS = 200_000  # số bước train thêm (fine-tuning)
+    N_ENVS = 8
+    TOTAL_TIMESTEPS = 2_000_000
 
     env_fns = [make_selfplay_env(seed=2000 + i) for i in range(N_ENVS)]
     vec_env = SubprocVecEnv(env_fns) if N_ENVS > 1 else DummyVecEnv(env_fns)
@@ -211,9 +211,9 @@ if __name__ == "__main__":
         model = PPO(
             "CnnPolicy",
             vec_env,
-            verbose=1,
+            verbose=0,
             learning_rate=3e-4,
-            batch_size=256,
+            batch_size=1024,
             n_epochs=10,
             clip_range=0.2,
             policy_kwargs=policy_kwargs,

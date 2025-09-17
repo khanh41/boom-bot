@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
 
-import cv2
 import numpy as np
 from gymnasium import spaces
 from pettingzoo import ParallelEnv
@@ -53,7 +52,7 @@ class Bomb:
 
 @dataclass
 class PlayerState:
-    position: Tuple[int, int]
+    position: Tuple[float, float]
     alive: bool
     status: str  # 'alive', 'dying', 'dead'
     speed: float
@@ -76,23 +75,31 @@ class MultiBomberEnv(ParallelEnv):
         self.grid_w = grid_w
         self.grid_h = grid_h
         self.max_steps = max_steps
-        self.tick_rate = 16  # ms (~60 FPS)
-        self.player_tick_rate = 200  # ms
-        self.dying_time = 5000  # 5 seconds
-        self.invincibility_ticks = 120  # 2 seconds at 60fps
-        self.ghost_stun_duration = 120  # 2 seconds at 60fps
-        self.bomb_fuse_ticks = 180  # 3 seconds at 60fps
-        self.bomb_exploding_soon_ticks = 60  # 1 second warning
-        self.bomb_slide_speed = 3.0
-        self.explosion_lifetime = 30  # 0.5 seconds
+
+        # --- Tick & timing ---
+        self.tick_rate = 16  # ms per tick (~60 ticks per second)
+        self.player_tick_rate = 200 // self.tick_rate  # ~200 ms per action
+
+        # Time-based constants (converted to ticks)
+        self.dying_time = 5000 // self.tick_rate  # ~5s
+        self.invincibility_ticks = 2000 // self.tick_rate  # ~2s
+        self.ghost_stun_duration = 2000 // self.tick_rate  # ~2s
+        self.bomb_fuse_ticks = 3000 // self.tick_rate  # ~3s
+        self.bomb_exploding_soon_ticks = 1000 // self.tick_rate  # ~1s warning
+        self.explosion_lifetime = 500 // self.tick_rate  # ~0.5s
+
+        self.bomb_slide_speed = 3.0  # still per tick distance
+
         self.item_spawn_chance = {
             ItemType.BOMB_UP: 0.15,
             ItemType.POWER_UP: 0.15,
             ItemType.SPEED_UP: 0.1
         }
 
+        # Observation shape (H, W, C)
         self.obs_shape = (self.grid_h, self.grid_w, 6)
 
+        # Agents, teams
         self.agents = [f"player_{i}" for i in range(4)]
         self.possible_agents = self.agents[:]
         self.teams = {
@@ -103,7 +110,7 @@ class MultiBomberEnv(ParallelEnv):
         }
         self.agent_timers = {a: 0 for a in self.agents}
 
-        self.render_mode = "ansi"  # Define render_mode attribute
+        self.render_mode = "ansi"
 
         # States
         self.players: Dict[str, PlayerState] = {}
@@ -113,7 +120,7 @@ class MultiBomberEnv(ParallelEnv):
         self.map = None
         self.steps = 0
 
-        # Define observation and action spaces for Gymnasium compatibility
+        # Spaces
         self._observation_space = spaces.Box(
             low=0,
             high=255,
@@ -165,31 +172,36 @@ class MultiBomberEnv(ParallelEnv):
                 continue
 
             # Increase agent timer
-            self.agent_timers[a] += self.tick_rate
+            self.agent_timers[a] += 1
+            act = actions.get(a, 0)  # default stay
 
-            if self.agent_timers[a] >= self.player_tick_rate or True:
+            if self.agent_timers[a] >= self.player_tick_rate:
                 # Agent can act
-                act = actions.get(a, 0)  # default stay
                 x, y = player.position
+                speed = player.speed
 
                 if act == 5:  # Place bomb
                     if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
-                        self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, a))
+                        self.bombs.append(Bomb(int(x), int(y), self.bomb_fuse_ticks, player.bomb_power, a))
                         player.bombs_placed += 1
                         rewards[a] += 1.0
+                elif act == 0:
+                    rewards[a] -= 0.1  # small penalty for idling
                 else:  # Move
                     dx, dy = ACTION_TO_DIR[act]
                     nx, ny = x + dx, y + dy
+                    # TODO: Add speed
+                    # nx, ny = x + dx * speed, y + dy * speed
                     if self._is_free(nx, ny):
                         player.position = (nx, ny)
                         rewards[a] += 1.0
                         # Reset timer for this agent
                         self.agent_timers[a] = 0
                     else:
-                        rewards[a] -= 2.0  # penalty for hitting wall/brick/bomb
+                        rewards[a] -= 1000.0  # penalty for hitting wall/brick/bomb
 
-                if act == 0:
-                    rewards[a] -= 0.1  # small penalty for idling
+            elif act != 0:
+                rewards[a] -= 1000.0  # small penalty for trying to act too fast
 
         # --- Bomb updates (every tick) ---
         new_bombs = []
@@ -221,7 +233,8 @@ class MultiBomberEnv(ParallelEnv):
                     player.speed = min(player.speed + 0.25, 3.5)
                 self.items[y, x] = 0
                 player.score += 5
-                rewards[a] += 10.0
+                print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
+                rewards[a] += 1000.0
 
         # --- Check flames / dying ---
         dead_this_step = []
@@ -230,39 +243,41 @@ class MultiBomberEnv(ParallelEnv):
                 player.status = "dying"
                 player.dying_ticks = self.dying_time // self.tick_rate
                 dead_this_step.append(a)
+                print(f"💀 {a} is dying!")
+                rewards[a] -= 5000.0
 
         # Update dying, invincibility, stun timers
-        for a, player in self.players.items():
-            if player.dying_ticks > 0:
-                player.dying_ticks -= 1
-                if player.dying_ticks <= 0:
-                    player.status = "dead"
-                    player.alive = False
-            if player.invincibility_ticks > 0:
-                player.invincibility_ticks -= 1
-            if player.stun_ticks > 0:
-                player.stun_ticks -= 1
-                player.is_stunned = player.stun_ticks > 0
+        # for a, player in self.players.items():
+        #     if player.dying_ticks > 0:
+        #         player.dying_ticks -= 1
+        #         if player.dying_ticks <= 0:
+        #             player.status = "dead"
+        #             player.alive = False
+        #     if player.invincibility_ticks > 0:
+        #         player.invincibility_ticks -= 1
+        #     if player.stun_ticks > 0:
+        #         player.stun_ticks -= 1
+        #         player.is_stunned = player.stun_ticks > 0
 
         # Ghost mode interactions (rescue / kill)
-        for a, player in self.players.items():
-            if player.status == "dead":
-                for other_a, other_p in self.players.items():
-                    if other_a != a and other_p.status == "dying" and other_p.position == player.position:
-                        if self.teams[a] == self.teams[other_a]:  # Rescue teammate
-                            other_p.status = "alive"
-                            other_p.dying_ticks = 0
-                            other_p.invincibility_ticks = self.invincibility_ticks
-                            rewards[a] += 100.0
-                            rewards[other_a] += 150.0
-                        else:  # Kill enemy
-                            other_p.status = "dead"
-                            other_p.alive = False
-                            other_p.dying_ticks = 0
-                            rewards[a] += 200.0
-                            for team_a in self.agents:
-                                if self.teams[team_a] == self.teams[a] and team_a != a:
-                                    rewards[team_a] += 100.0
+        # for a, player in self.players.items():
+        #     if player.status == "dead":
+        #         for other_a, other_p in self.players.items():
+        #             if other_a != a and other_p.status == "dying" and other_p.position == player.position:
+        #                 if self.teams[a] == self.teams[other_a]:  # Rescue teammate
+        #                     other_p.status = "alive"
+        #                     other_p.dying_ticks = 0
+        #                     other_p.invincibility_ticks = self.invincibility_ticks
+        #                     rewards[a] += 100.0
+        #                     rewards[other_a] += 150.0
+        #                 else:  # Kill enemy
+        #                     other_p.status = "dead"
+        #                     other_p.alive = False
+        #                     other_p.dying_ticks = 0
+        #                     rewards[a] += 200.0
+        #                     for team_a in self.agents:
+        #                         if self.teams[team_a] == self.teams[a] and team_a != a:
+        #                             rewards[team_a] += 100.0
 
         # Team rewards for deaths
         for a in dead_this_step:
@@ -368,8 +383,10 @@ class MultiBomberEnv(ParallelEnv):
                 if self.map[ny, nx] == TileType.WALL:
                     rewards[bomb.owner] -= 1.0
                     break
+
                 self.flames[ny, nx] = self.explosion_lifetime
                 if self.map[ny, nx] == TileType.BRICK:
+                    print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
                     self.map[ny, nx] = TileType.EMPTY
                     rewards[bomb.owner] += 10.0
                     r = self.rng.random()
@@ -380,6 +397,7 @@ class MultiBomberEnv(ParallelEnv):
                     elif r < sum(self.item_spawn_chance.values()):
                         self.items[ny, nx] = ItemType.SPEED_UP
                     break
+
         return rewards
 
     def render(self):

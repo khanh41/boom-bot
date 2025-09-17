@@ -57,7 +57,8 @@ def evaluate(model_path="multi_bomber_selfplay_ppo_finetuned.zip", episodes=3, f
             # lấy action từ policy đã train
             actions = {}
             for agent in env.agents:
-                action, _ = model.predict(obs[agent], deterministic=True)
+                action, _ = model.predict(obs[agent])
+                print(action)
                 actions[agent] = int(action)
 
             obs, rewards, terminations, truncations, infos = env.step(actions)
@@ -76,4 +77,4 @@ def evaluate(model_path="multi_bomber_selfplay_ppo_finetuned.zip", episodes=3, f
 
 
 if __name__ == "__main__":
-    evaluate(episodes=2, fps=5)
+    evaluate(episodes=2, fps=60)
