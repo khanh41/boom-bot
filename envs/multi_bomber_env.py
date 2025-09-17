@@ -186,7 +186,7 @@ class MultiBomberEnv(ParallelEnv):
                         player.bombs_placed += 1
                         rewards[a] += 1.0
                 elif act == 0:
-                    rewards[a] -= 0.1  # small penalty for idling
+                    rewards[a] -= 0.01  # small penalty for idling
                 else:  # Move
                     dx, dy = ACTION_TO_DIR[act]
                     nx, ny = x + dx, y + dy
@@ -194,14 +194,11 @@ class MultiBomberEnv(ParallelEnv):
                     # nx, ny = x + dx * speed, y + dy * speed
                     if self._is_free(nx, ny):
                         player.position = (nx, ny)
-                        rewards[a] += 1.0
+                        rewards[a] += 0.1
                         # Reset timer for this agent
                         self.agent_timers[a] = 0
                     else:
                         rewards[a] -= 1000.0  # penalty for hitting wall/brick/bomb
-
-            elif act != 0:
-                rewards[a] -= 1000.0  # small penalty for trying to act too fast
 
         # --- Bomb updates (every tick) ---
         new_bombs = []
@@ -234,7 +231,7 @@ class MultiBomberEnv(ParallelEnv):
                 self.items[y, x] = 0
                 player.score += 5
                 print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
-                rewards[a] += 1000.0
+                rewards[a] += 10.0
 
         # --- Check flames / dying ---
         dead_this_step = []
@@ -244,7 +241,7 @@ class MultiBomberEnv(ParallelEnv):
                 player.dying_ticks = self.dying_time // self.tick_rate
                 dead_this_step.append(a)
                 print(f"💀 {a} is dying!")
-                rewards[a] -= 5000.0
+                rewards[a] -= 50.0
 
         # Update dying, invincibility, stun timers
         # for a, player in self.players.items():
@@ -381,14 +378,14 @@ class MultiBomberEnv(ParallelEnv):
                 if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
                     break
                 if self.map[ny, nx] == TileType.WALL:
-                    rewards[bomb.owner] -= 1.0
+                    rewards[bomb.owner] -= 0.1
                     break
 
                 self.flames[ny, nx] = self.explosion_lifetime
                 if self.map[ny, nx] == TileType.BRICK:
                     print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
                     self.map[ny, nx] = TileType.EMPTY
-                    rewards[bomb.owner] += 10.0
+                    rewards[bomb.owner] += 2.0
                     r = self.rng.random()
                     if r < self.item_spawn_chance[ItemType.BOMB_UP]:
                         self.items[ny, nx] = ItemType.BOMB_UP

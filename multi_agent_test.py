@@ -33,8 +33,6 @@ def evaluate(model_path="multi_bomber_selfplay_ppo_finetuned.zip", episodes=3, f
 
     for ep in range(episodes):
         obs, infos = env.reset()
-        terminations = {a: False for a in env.agents}
-        truncations = {a: False for a in env.agents}
         total_rewards = {a: 0 for a in env.agents}
 
         # màn hình pygame đủ để hiển thị ASCII map
