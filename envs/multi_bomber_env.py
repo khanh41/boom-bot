@@ -125,7 +125,7 @@ class MultiBomberEnv(ParallelEnv):
             low=0,
             high=255,
             shape=self.obs_shape,
-            dtype=np.uint8
+            dtype=np.float32,
         )
         self._action_space = spaces.Discrete(ACTIONS)
 
@@ -277,7 +277,7 @@ class MultiBomberEnv(ParallelEnv):
                     player.speed = min(player.speed + 0.25, 3.5)
                 self.items[y, x] = 0
                 player.score += 20
-                print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
+                # print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
                 rewards[a] += 20.0
 
         # --- Check flames / dying ---
@@ -294,7 +294,7 @@ class MultiBomberEnv(ParallelEnv):
             if player.dying_ticks > 0:
                 player.dying_ticks -= 1
                 if player.dying_ticks <= 0:
-                    print(f"☠️ {a} is dead!")
+                    # print(f"☠️ {a} is dead!")
                     player.status = "dead"
                     player.alive = False
             if player.invincibility_ticks > 0:
@@ -388,7 +388,7 @@ class MultiBomberEnv(ParallelEnv):
 
         # Chuyển sang (H, W, C), scale về [0,255]
         obs = np.transpose(H, (1, 2, 0)) * 255.0
-        return obs.astype(np.uint8)
+        return obs.astype(np.float32)
 
     def _gen_random_map(self):
         grid = np.zeros((self.grid_h, self.grid_w), dtype=np.int32)
@@ -459,14 +459,14 @@ class MultiBomberEnv(ParallelEnv):
     def handle_cell(self, nx, ny, bomb: Bomb, rewards: Dict[str, float]):
         # Nếu là item -> phá hủy
         if self.items[ny, nx] != 0:
-            print(f"💥 Item at {(nx, ny)} destroyed by bomb {bomb.owner}")
+            # print(f"💥 Item at {(nx, ny)} destroyed by bomb {bomb.owner}")
             self.items[ny, nx] = 0
             rewards[bomb.owner] -= 0.5  # phạt khi phá item
 
         # Nếu có bom khác -> chain reaction
         for other_b in list(self.bombs):  # copy để tránh modify khi iterate
             if other_b.x == nx and other_b.y == ny:
-                print(f"💣 Chain reaction triggered at {(nx, ny)} by {bomb.owner}")
+                # print(f"💣 Chain reaction triggered at {(nx, ny)} by {bomb.owner}")
                 self.bombs.remove(other_b)
                 self.players[other_b.owner].bombs_placed -= 1
                 rewards = self._explode(other_b, rewards)
@@ -491,7 +491,7 @@ class MultiBomberEnv(ParallelEnv):
 
                 if self.map[ny, nx] == TileType.BRICK:
                     brick_destroyed += 1
-                    print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
+                    # print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
                     self.map[ny, nx] = TileType.EMPTY
                     r = self.rng.random()
                     if r < self.item_spawn_chance[ItemType.BOMB_UP]:
