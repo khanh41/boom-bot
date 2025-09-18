@@ -181,10 +181,43 @@ class MultiBomberEnv(ParallelEnv):
                 speed = player.speed
 
                 if act == 5:  # Place bomb
+                    can_place = False
+                    target_reason = None
+                    x, y = int(x), int(y)
+
                     if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
-                        self.bombs.append(Bomb(int(x), int(y), self.bomb_fuse_ticks, player.bomb_power, a))
-                        player.bombs_placed += 1
-                        rewards[a] += 1.0
+                        # Check bricks or enemies in bomb range
+                        for dx, dy in EXPLOSION_DIRS:
+                            for i in range(1, player.bomb_power + 1):
+                                nx, ny = x + dx * i, y + dy * i
+                                if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
+                                    break
+                                if self.map[ny, nx] == TileType.WALL:
+                                    break
+                                if self.map[ny, nx] == TileType.BRICK:
+                                    can_place = True
+                                    target_reason = "brick"
+                                    break
+                                # Check if enemy in line of fire
+                                for other_a, other_p in self.players.items():
+                                    if other_a != a and other_p.status == "alive" and (nx, ny) == (
+                                            int(other_p.position[0]), int(other_p.position[1])):
+                                        can_place = True
+                                        target_reason = "enemy"
+                                        break
+                                if can_place:
+                                    break
+                            if can_place:
+                                break
+
+                        if can_place:
+                            # Actually place bomb
+                            self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, a))
+                            player.bombs_placed += 1
+                            rewards[a] += 2.0 if target_reason == "brick" else 5.0  # reward more if targeting enemy
+                        else:
+                            rewards[a] -= 1.0  # penalty for useless bomb
+
                 elif act == 0:
                     rewards[a] -= 0.05  # small penalty for idling
                 else:  # Move
@@ -244,7 +277,7 @@ class MultiBomberEnv(ParallelEnv):
                     player.speed = min(player.speed + 0.25, 3.5)
                 self.items[y, x] = 0
                 player.score += 20
-                print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
+                # print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
                 rewards[a] += 20.0
 
         # --- Check flames / dying ---
@@ -261,7 +294,7 @@ class MultiBomberEnv(ParallelEnv):
             if player.dying_ticks > 0:
                 player.dying_ticks -= 1
                 if player.dying_ticks <= 0:
-                    print(f"☠️ {a} is dead!")
+                    # print(f"☠️ {a} is dead!")
                     player.status = "dead"
                     player.alive = False
             if player.invincibility_ticks > 0:
@@ -301,10 +334,10 @@ class MultiBomberEnv(ParallelEnv):
         #             else:
         #                 rewards[other_a] -= 50.0
 
-        # Survival bonus
-        for a, player in self.players.items():
-            if player.status == "alive":
-                rewards[a] += 0.00001
+        # # Survival bonus
+        # for a, player in self.players.items():
+        #     if player.status == "alive":
+        #         rewards[a] += 0.00001
 
         # Terminations & truncations
         terminations = {a: self.players[a].status == "dead" for a in self.agents}
@@ -412,23 +445,43 @@ class MultiBomberEnv(ParallelEnv):
                         break
         return False
 
+    def handle_cell(self, nx, ny, bomb: Bomb, rewards: Dict[str, float]):
+        # Nếu là item -> phá hủy
+        if self.items[ny, nx] != 0:
+            # print(f"💥 Item at {(nx, ny)} destroyed by bomb {bomb.owner}")
+            self.items[ny, nx] = 0
+            rewards[bomb.owner] -= 0.5  # phạt khi phá item
+
+        # Nếu có bom khác -> chain reaction
+        for other_b in list(self.bombs):  # copy để tránh modify khi iterate
+            if other_b.x == nx and other_b.y == ny:
+                # print(f"💣 Chain reaction triggered at {(nx, ny)} by {bomb.owner}")
+                self.bombs.remove(other_b)
+                self.players[other_b.owner].bombs_placed -= 1
+                rewards = self._explode(other_b, rewards)
+                break
+        return rewards
+
     def _explode(self, bomb: Bomb, rewards: Dict[str, float]):
         x, y, p = bomb.x, bomb.y, bomb.power
         self.flames[y, x] = self.explosion_lifetime
         for dx, dy in EXPLOSION_DIRS:
+            brick_destroyed = 0
             for i in range(1, p + 1):
                 nx, ny = x + dx * i, y + dy * i
                 if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
                     break
                 if self.map[ny, nx] == TileType.WALL:
-                    rewards[bomb.owner] -= 0.1
+                    rewards[bomb.owner] -= 0.5
                     break
 
                 self.flames[ny, nx] = self.explosion_lifetime
+                rewards = self.handle_cell(nx, ny, bomb, rewards)
+
                 if self.map[ny, nx] == TileType.BRICK:
-                    print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
+                    brick_destroyed += 1
+                    # print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
                     self.map[ny, nx] = TileType.EMPTY
-                    rewards[bomb.owner] += 5.0
                     r = self.rng.random()
                     if r < self.item_spawn_chance[ItemType.BOMB_UP]:
                         self.items[ny, nx] = ItemType.BOMB_UP
@@ -437,6 +490,8 @@ class MultiBomberEnv(ParallelEnv):
                     elif r < sum(self.item_spawn_chance.values()):
                         self.items[ny, nx] = ItemType.SPEED_UP
                     break
+
+            rewards[bomb.owner] += (brick_destroyed ** 1.5) * 5.0
 
         return rewards
 

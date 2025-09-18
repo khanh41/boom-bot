@@ -29,7 +29,7 @@ def evaluate(model_path="multi_bomber_selfplay_ppo_finetuned.zip", episodes=3, f
     print(f"🔄 Loading model from {model_path}")
     model = PPO.load(model_path, device="cuda" if torch.cuda.is_available() else "cpu")
 
-    env = MultiBomberEnv(max_steps=1000000)
+    env = MultiBomberEnv(max_steps=10000)
 
     for ep in range(episodes):
         obs, infos = env.reset()
@@ -56,7 +56,6 @@ def evaluate(model_path="multi_bomber_selfplay_ppo_finetuned.zip", episodes=3, f
             actions = {}
             for agent in env.agents:
                 action, _ = model.predict(obs[agent])
-                print(action)
                 actions[agent] = int(action)
 
             obs, rewards, terminations, truncations, infos = env.step(actions)
