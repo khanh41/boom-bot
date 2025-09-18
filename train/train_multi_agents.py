@@ -70,7 +70,7 @@ class SelfPlayWrapper(gymnasium.Env):
 # === Utility để tạo envs ===
 def make_selfplay_env(seed=0):
     def _init():
-        base = MultiBomberEnv(seed=seed, max_steps=10000)
+        base = MultiBomberEnv(seed=seed, max_steps=2000)
         return SelfPlayWrapper(base)
 
     return _init
@@ -188,7 +188,7 @@ class ImpalaCNN(BaseFeaturesExtractor):
 # === MAIN ===
 if __name__ == "__main__":
     N_ENVS = 8
-    TOTAL_TIMESTEPS = 10_000_000
+    TOTAL_TIMESTEPS = 1_000_000
 
     env_fns = [make_selfplay_env(seed=2000 + i) for i in range(N_ENVS)]
     vec_env = SubprocVecEnv(env_fns) if N_ENVS > 1 else DummyVecEnv(env_fns)
@@ -213,7 +213,8 @@ if __name__ == "__main__":
             vec_env,
             verbose=0,
             learning_rate=3e-4,
-            batch_size=1024,
+            n_steps=2048,
+            batch_size=256,
             n_epochs=10,
             clip_range=0.2,
             policy_kwargs=policy_kwargs,

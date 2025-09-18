@@ -277,7 +277,7 @@ class MultiBomberEnv(ParallelEnv):
                     player.speed = min(player.speed + 0.25, 3.5)
                 self.items[y, x] = 0
                 player.score += 20
-                # print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
+                print(f"🎁 {a} picked up item {item_type} at {(x, y)}")
                 rewards[a] += 20.0
 
         # --- Check flames / dying ---
@@ -287,14 +287,14 @@ class MultiBomberEnv(ParallelEnv):
                 player.status = "dying"
                 player.dying_ticks = self.dying_time // self.tick_rate
                 dead_this_step.append(a)
-                rewards[a] -= 5.0
+                rewards[a] -= 30.0
 
         # Update timers
         for a, player in self.players.items():
             if player.dying_ticks > 0:
                 player.dying_ticks -= 1
                 if player.dying_ticks <= 0:
-                    # print(f"☠️ {a} is dead!")
+                    print(f"☠️ {a} is dead!")
                     player.status = "dead"
                     player.alive = False
             if player.invincibility_ticks > 0:
@@ -323,27 +323,38 @@ class MultiBomberEnv(ParallelEnv):
         #                         if self.teams[team_a] == self.teams[a] and team_a != a:
         #                             rewards[team_a] += 100.0
 
-        # # Team rewards for deaths
-        # for a in dead_this_step:
-        #     team = self.teams[a]
-        #     opp_team = "A" if team == "B" else "B"
-        #     for other_a in self.agents:
-        #         if self.players[other_a].status == "alive":
-        #             if self.teams[other_a] == opp_team:
-        #                 rewards[other_a] += 30.0
-        #             else:
-        #                 rewards[other_a] -= 50.0
+        # Team rewards for deaths
+        for a in dead_this_step:
+            team = self.teams[a]
+            opp_team = "A" if team == "B" else "B"
+            for other_a in self.agents:
+                if self.players[other_a].status == "alive":
+                    if self.teams[other_a] == opp_team:
+                        rewards[other_a] += 30.0
+                    else:
+                        rewards[other_a] -= 50.0
 
-        # # Survival bonus
-        # for a, player in self.players.items():
-        #     if player.status == "alive":
-        #         rewards[a] += 0.00001
+        # Survival bonus
+        for a, player in self.players.items():
+            if player.status == "alive":
+                rewards[a] += 0.00001
 
         # Terminations & truncations
         terminations = {a: self.players[a].status == "dead" for a in self.agents}
         truncations = {a: self.steps >= self.max_steps for a in self.agents}
         obs = {a: self._encode_obs(a) for a in self.agents}
         infos = {a: {"score": self.players[a].score} for a in self.agents}
+
+        # Check if only one team remains
+        alive_teams = {self.teams[a] for a in self.agents if self.players[a].status == "alive"}
+        if len(alive_teams) == 1:
+            winning_team = alive_teams.pop()
+            for a in self.agents:
+                if self.teams[a] == winning_team:
+                    rewards[a] += 200.0
+
+            terminations = {a: True for a in self.agents}
+            print(f"🏆 Team {winning_team} wins!")
 
         return obs, rewards, terminations, truncations, infos
 
@@ -448,14 +459,14 @@ class MultiBomberEnv(ParallelEnv):
     def handle_cell(self, nx, ny, bomb: Bomb, rewards: Dict[str, float]):
         # Nếu là item -> phá hủy
         if self.items[ny, nx] != 0:
-            # print(f"💥 Item at {(nx, ny)} destroyed by bomb {bomb.owner}")
+            print(f"💥 Item at {(nx, ny)} destroyed by bomb {bomb.owner}")
             self.items[ny, nx] = 0
             rewards[bomb.owner] -= 0.5  # phạt khi phá item
 
         # Nếu có bom khác -> chain reaction
         for other_b in list(self.bombs):  # copy để tránh modify khi iterate
             if other_b.x == nx and other_b.y == ny:
-                # print(f"💣 Chain reaction triggered at {(nx, ny)} by {bomb.owner}")
+                print(f"💣 Chain reaction triggered at {(nx, ny)} by {bomb.owner}")
                 self.bombs.remove(other_b)
                 self.players[other_b.owner].bombs_placed -= 1
                 rewards = self._explode(other_b, rewards)
@@ -480,7 +491,7 @@ class MultiBomberEnv(ParallelEnv):
 
                 if self.map[ny, nx] == TileType.BRICK:
                     brick_destroyed += 1
-                    # print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
+                    print(f"🔥 Bomb by {bomb.owner} destroyed brick at {(nx, ny)}")
                     self.map[ny, nx] = TileType.EMPTY
                     r = self.rng.random()
                     if r < self.item_spawn_chance[ItemType.BOMB_UP]:
@@ -490,6 +501,13 @@ class MultiBomberEnv(ParallelEnv):
                     elif r < sum(self.item_spawn_chance.values()):
                         self.items[ny, nx] = ItemType.SPEED_UP
                     break
+
+                for other_a, other_p in self.players.items():
+                    if other_p.status == "alive" and (other_p.position == (nx, ny) or (other_p.position == (x, y))):
+                        if other_a != bomb.owner:
+                            rewards[bomb.owner] += 50.0
+                        else:
+                            rewards[bomb.owner] -= 30.0
 
             rewards[bomb.owner] += (brick_destroyed ** 1.5) * 5.0
 
