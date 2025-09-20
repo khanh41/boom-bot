@@ -210,16 +210,18 @@ class MultiBomberEnv(ParallelEnv):
                             if can_place:
                                 break
 
+                        self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, a))
+                        player.bombs_placed += 1
+
                         if can_place:
                             # Actually place bomb
-                            self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, a))
-                            player.bombs_placed += 1
                             rewards[a] += 2.0 if target_reason == "brick" else 5.0  # reward more if targeting enemy
                         else:
                             rewards[a] -= 1.0  # penalty for useless bomb
 
                 elif act == 0:
-                    rewards[a] -= 0.05  # small penalty for idling
+                    continue
+                    # rewards[a] -= 0.05  # small penalty for idling
                 else:  # Move
                     dx, dy = ACTION_TO_DIR[act]
                     nx, ny = x + dx, y + dy
@@ -241,11 +243,9 @@ class MultiBomberEnv(ParallelEnv):
                             if self._is_danger(int(x), int(y)) and not self._is_danger(nx, ny):
                                 rewards[a] += 0.5  # thưởng thoát chết
 
-                            player.position = (nx, ny)
-                            rewards[a] += 0.05
-                            self.agent_timers[a] = 0
-                    else:
-                        rewards[a] -= 0.2
+                        player.position = (nx, ny)
+                        rewards[a] += 0.05
+                        self.agent_timers[a] = 0
 
         # --- Bomb updates ---
         new_bombs = []
