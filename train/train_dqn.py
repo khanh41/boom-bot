@@ -1,9 +1,10 @@
-import argparse, os
-import numpy as np
-import torch
-from envs.bomber_env import BomberEnv, ACTIONS
+import argparse
+import os
+
 from agents.dqn import DQNAgent
-from utils.common import device, ensure_dir
+from envs.bomber_env import BomberEnv, ACTIONS
+from utils.common import ensure_dir
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -36,14 +37,15 @@ def main():
             obs = obs2
             total_r += r
 
-        print(f'Episode {ep+1}: R={total_r:.2f}, eps={agent.epsilon():.3f}')
+        print(f'Episode {ep + 1}: R={total_r:.2f}, eps={agent.epsilon():.3f}')
 
-        if (ep+1) % 200 == 0:
+        if (ep + 1) % 200 == 0:
             agent.save(args.save_path)
-            print(f"Saved checkpoint at episode {ep+1}")
+            print(f"Saved checkpoint at episode {ep + 1}")
 
     agent.save(args.save_path)
     print('Training finished → saved to', args.save_path)
+
 
 if __name__ == "__main__":
     main()
