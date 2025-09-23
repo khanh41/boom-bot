@@ -87,7 +87,7 @@ class ImpalaCNN(BaseFeaturesExtractor):
 # === MAIN ===
 if __name__ == "__main__":
     N_ENVS = 8
-    TOTAL_TIMESTEPS = 10_000_000
+    TOTAL_TIMESTEPS = 500_000
 
     env = make_vec_env(lambda: BomberEnv(max_steps=10000), n_envs=N_ENVS)
 
@@ -106,15 +106,16 @@ if __name__ == "__main__":
         )
 
         model = PPO(
-            "CnnPolicy",
+            "MultiInputPolicy",
             env,
             verbose=1,
             learning_rate=3e-4,
             n_steps=2048,
             batch_size=256,
-            n_epochs=10,
+            n_epochs=4,
             clip_range=0.2,
-            policy_kwargs=policy_kwargs,
+            ent_coef=0.05,
+            # policy_kwargs=policy_kwargs,
             tensorboard_log="./multi_bomber_tensorboard/",
             device="cuda"
         )
