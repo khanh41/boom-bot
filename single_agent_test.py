@@ -55,7 +55,7 @@ def evaluate(model_path="train/multi_bomber_selfplay_ppo_finetuned.zip", episode
 
             action, _ = model.predict(ob)
 
-            ob, reward, termination, truncation, info = env.step(action)
+            ob, reward, termination, truncation, info = env.step(int(action))
             total_reward += reward
 
             draw_env(env, screen)
@@ -70,4 +70,4 @@ def evaluate(model_path="train/multi_bomber_selfplay_ppo_finetuned.zip", episode
 
 
 if __name__ == "__main__":
-    evaluate(episodes=2, fps=60)
+    evaluate(episodes=2, fps=30)

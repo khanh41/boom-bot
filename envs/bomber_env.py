@@ -140,8 +140,7 @@ class BomberEnv(gymnasium.Env):
             "state": spaces.Box(low=-1, high=1, shape=(10,), dtype=np.float32),
         })
 
-        # movement (0-4), place_bomb (0-1)
-        self.action_space = spaces.MultiDiscrete([5, 2])
+        self.action_space = spaces.Discrete(ACTIONS)
 
     def reset(self, seed=None, options=None):
         if seed is not None:
@@ -197,7 +196,7 @@ class BomberEnv(gymnasium.Env):
         self.bombs = new_bombs
 
         # Decay flames
-        self.flames = np.maximum(self.flames - 1, 0)
+        self.flames = np.maximum(self.flames - self.player_tick_rate, 0)
 
         # Process item pickups
         for a, player in self.players.items():
@@ -255,9 +254,9 @@ class BomberEnv(gymnasium.Env):
             winning_team = alive_teams.pop()
             for a in self.agents:
                 if self.teams[a] == winning_team:
-                    rewards[a] += 20.0
+                    rewards[a] += 2000.0
                 else:
-                    rewards[a] -= 20.0
+                    rewards[a] -= 200.0
 
         # update score
         for a in self.agents:
@@ -279,7 +278,7 @@ class BomberEnv(gymnasium.Env):
 
             for a in self.agents:
                 if self.teams[a] == winning_team:
-                    rewards[a] += 20.0
+                    rewards[a] += 2000.0
 
         if all(terminations.values()) or all(truncations.values()):
             print(f"{self.env_id}: 🏆 Team {winning_team} wins at step {self.steps}!")
@@ -298,26 +297,20 @@ class BomberEnv(gymnasium.Env):
         return ob, reward, termination, truncation, info
 
     def _process_player_action(self, action: int, player_name: str):
-        if isinstance(action, int):
-            move_action = action
-            bomb_action = 0
-        else:
-            move_action, bomb_action = action
-
         player = self.players[player_name]
-        x, y = player.position
+        x, y = map(int, player.position)
         reward = 0
 
         # --- LOOP detection (oscillation penalty) ---
-        if move_action == player.last_action == player.second_last_action:
+        if action == player.last_action == player.second_last_action:
             reward += -5  # LOOP
 
         # --- WAITED NO BOMB ---
-        if move_action == 0 and bomb_action == 0:
+        if action == 0 and player.bombs_placed == 0:
             reward += -5
 
         # --- Bomb placement ---
-        if bomb_action == 1:
+        if action == 5:
             x, y = int(x), int(y)
             if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
                 # Place bomb
@@ -343,8 +336,8 @@ class BomberEnv(gymnasium.Env):
                 reward += -3  # INVALID ACTION
 
         # --- Movement ---
-        if move_action in [1, 2, 3, 4]:
-            dx, dy = ACTION_TO_DIR[move_action]
+        elif action in [1, 2, 3, 4]:
+            dx, dy = ACTION_TO_DIR[action]
             nx, ny = x + dx, y + dy
             if self._is_free(nx, ny):
                 if self._is_danger(nx, ny):
@@ -354,9 +347,29 @@ class BomberEnv(gymnasium.Env):
                     reward += 40
                     player.position = (nx, ny)
                     player.second_last_action = player.last_action
-                    player.last_action = move_action
+                    player.last_action = action
             else:
                 reward += -3  # INVALID ACTION
+
+        # --- Distance tracking ---
+        # Crates = tất cả ô có BRICK
+        crates = {(cx, cy) for cy in range(self.grid_h) for cx in range(self.grid_w) if
+                  self.map[cy, cx] == TileType.BRICK}
+        dist_crate = self._shortest_distance(player.position, crates)
+        if dist_crate < player.last_dist_crate:
+            reward += 10  # CLOSER CRATE
+        elif dist_crate > player.last_dist_crate and player.last_dist_crate != np.inf:
+            reward += -10  # FURTHER CRATE
+        player.last_dist_crate = dist_crate
+
+        # Coins = tất cả item (ở đây mình coi SPEED_UP, POWER_UP, BOMB_UP là coin)
+        coins = {(cx, cy) for cy in range(self.grid_h) for cx in range(self.grid_w) if self.items[cy, cx] > 0}
+        dist_coin = self._shortest_distance(player.position, coins)
+        if dist_coin < player.last_dist_coin:
+            reward += 10  # CLOSER COIN
+        elif dist_coin > player.last_dist_coin and player.last_dist_coin != np.inf:
+            reward += -5  # đi xa coin
+        player.last_dist_coin = dist_coin
 
         return reward
 
@@ -377,7 +390,7 @@ class BomberEnv(gymnasium.Env):
         # Is danger map
         for y in range(self.grid_h):
             for x in range(self.grid_w):
-                if self._is_danger(x, y):
+                if self._is_danger(x, y, next_step=True):
                     H[3, y, x] = 1.0
 
         # Flames
@@ -461,14 +474,16 @@ class BomberEnv(gymnasium.Env):
             return False
         return True
 
-    def _is_danger(self, x, y):
+    def _is_danger(self, x, y, next_step=False):
         # Nếu trong flame thì chắc chắn nguy hiểm
         if self.flames[y, x] > 0:
             return True
 
         # Nếu trong vùng bom sắp nổ
         for b in self.bombs:
-            if not b.is_exploding_soon:
+            if not next_step and not b.is_exploding_soon:
+                continue
+            if next_step and b.timer > self.bomb_exploding_soon_ticks + self.player_tick_rate:
                 continue
             for dx, dy in EXPLOSION_DIRS:
                 for i in range(1, b.power + 1):
