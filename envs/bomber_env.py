@@ -109,7 +109,7 @@ class BomberEnv(gymnasium.Env):
         }
 
         # Observation shape (H, W, C)
-        self.obs_shape = (9, self.grid_h, self.grid_w)
+        self.obs_shape = (10, self.grid_h, self.grid_w)
 
         # Agents, teams
         self.agents = [f"player_{i}" for i in range(4)]
@@ -212,7 +212,7 @@ class BomberEnv(gymnasium.Env):
                     player.speed = min(player.speed + 0.25, 3.5)
                 self.items[y, x] = 0
                 print(f"{self.env_id}: 🎁 {a} picked up item {item_type} at {(x, y)}")
-                rewards[a] += 100.0
+                rewards[a] += 1.0
 
         # --- Check flames / dying ---
         for a, player in self.players.items():
@@ -327,14 +327,18 @@ class BomberEnv(gymnasium.Env):
             x, y = int(x), int(y)
             if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
                 # Check bricks or enemies in bomb range
+                is_senseless_bomb = True
                 for dx, dy in EXPLOSION_DIRS:
                     for i in range(1, player.bomb_power + 1):
                         nx, ny = x + dx * i, y + dy * i
+                        if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
+                            break
                         if self.map[ny, nx] == TileType.WALL:
-                            reward -= 10.1  # penalty for placing bomb towards wall
+                            reward -= 0.05  # penalty for placing bomb towards wall
                             break
                         if self.map[ny, nx] == TileType.BRICK:
-                            reward += 10.5  # reward for targeting brick
+                            reward += 0.1  # reward for targeting brick
+                            is_senseless_bomb = True
                             break
 
                         # Check if enemy in line of fire
@@ -344,20 +348,24 @@ class BomberEnv(gymnasium.Env):
                                 and other_p.position == (nx, ny)
                                 and self.teams[other_a] != self.teams[player_name]
                             ):
-                                reward += 2.0
+                                reward += 0.5
+                                is_senseless_bomb = False
 
                 self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, player_name))
                 player.bombs_placed += 1
-                reward += 0.1  # reward for placing bomb
                 player.stuck_bomb_count = 0
-            # else:
-            #     reward -= 1.0  # penalty for invalid bomb placement
-            #     player.invalid_bomb_action_count += 1
+                if is_senseless_bomb:
+                    reward -= 0.1  # penalty for senseless bomb
+                else:
+                    reward += 0.01  # reward for placing bomb
+            else:
+                reward -= 0.1  # penalty for invalid bomb placement
+                player.invalid_bomb_action_count += 1
 
         if move_action == 0:
             # Penalty for idling
             reward -= 0.001
-        elif self.agent_timers[player_name] >= self.player_tick_rate:
+        elif self.agent_timers[player_name] >= self.player_tick_rate or True:
             # Move
             if move_action in [1, 2, 3, 4]:
                 dx, dy = ACTION_TO_DIR[move_action]
@@ -366,9 +374,9 @@ class BomberEnv(gymnasium.Env):
 
                     # Big penalty for moving and sure die
                     if self._is_danger(nx, ny):
-                        reward -= 0.1
+                        reward -= 0.5
                     else:
-                        reward += 0.2  # reward for moving
+                        reward += 0.01  # reward for moving
                         self.agent_timers[player_name] = 0
                         player.stuck_count = 0
 
@@ -380,68 +388,61 @@ class BomberEnv(gymnasium.Env):
 
                         player.second_last_action = player.last_action
                         player.last_action = move_action
-                # else:
-                #     reward -= 1.0 # penalty for hitting wall
-                #     player.invalid_action_count += 1
+                else:
+                    reward -= 0.5 # penalty for hitting wall
+                    player.invalid_action_count += 1
 
         # elif move_action != 0:
-        #     reward -= 5.0 # small penalty for trying to move too fast
+        #     reward -= 0.01 # small penalty for trying to move too fast
         #     player.invalid_action_count += 1
 
         return reward
 
     def _encode_obs(self, agent_id):
-        H = np.zeros((9, self.grid_h, self.grid_w), dtype=np.float32)
+        H = np.zeros((10, self.grid_h, self.grid_w), dtype=np.float32)
 
-        # Map: walls (1.0), bricks (0.5), empty (0.0)
-        H[0] = (self.map == TileType.WALL).astype(np.float32) + 0.5 * (self.map == TileType.BRICK).astype(np.float32)
+        # Map: walls
+        H[0] = (self.map == TileType.WALL).astype(np.float32)
+
+        # Map: bricks
+        H[1] = (self.map == TileType.BRICK).astype(np.float32)
 
         # Bombs: b.y and b.x are the coordinates of the bomb
         # b.timer / self.bomb_fuse_ticks gives a value between 0-1, 1 means just placed, 0 means about to explode
         for b in self.bombs:
-            H[1, b.y, b.x] = b.timer / self.bomb_fuse_ticks
+            H[2, b.y, b.x] = b.timer / self.bomb_fuse_ticks
+
+        # Is danger map
+        for y in range(self.grid_h):
+            for x in range(self.grid_w):
+                if self._is_danger(x, y):
+                    H[3, y, x] = 1.0
 
         # Flames
-        H[2] = np.clip(self.flames / self.explosion_lifetime, 0, 1)
+        H[4] = np.clip(self.flames / self.explosion_lifetime, 0, 1)
 
         # Items
-        H[3] = (self.items > 0).astype(np.float32)
+        H[5] = (self.items > 0).astype(np.float32)
 
         # Self
         x, y = self.players[agent_id].position
-        H[4, y, x] = 1.0 if self.players[agent_id].status != "dead" else 0.5
+        H[6, y, x] = 1.0 if self.players[agent_id].status != "dead" else 0.5
 
         # teammates
         for a in self.agents:
             x, y = self.players[a].position
             if a != agent_id and self.teams[a] == self.teams[agent_id]:
-                H[5, y, x] = 1 if self.players[a].status != "dead" else 0.5
+                H[7, y, x] = 1 if self.players[a].status != "dead" else 0.5
 
         # Enemies
         for a in self.agents:
             x, y = self.players[a].position
             if a != agent_id and self.teams[a] != self.teams[agent_id]:
-                H[6, y, x] = 1 if self.players[a].status != "dead" else 0.5
-
-        for b in self.bombs:
-            danger_value = b.timer / self.bomb_fuse_ticks
-            # chính vị trí bom
-            H[7, b.y, b.x] = max(H[7, b.y, b.x], danger_value)
-            # vùng ảnh hưởng
-            for dx, dy in EXPLOSION_DIRS:
-                for i in range(1, b.power + 1):
-                    nx, ny = b.x + dx * i, b.y + dy * i
-                    if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
-                        break
-                    if self.map[ny, nx] == TileType.WALL:
-                        break
-                    if self.map[ny, nx] == TileType.BRICK:
-                        break
-                    H[7, ny, nx] = max(H[7, ny, nx], danger_value)
+                H[8, y, x] = 1 if self.players[a].status != "dead" else 0.5
 
         player = self.players[agent_id]
         sx, sy = map(int, player.position)
-        H[8] = self._compute_escape_distance_map((sx, sy))
+        H[9] = self._compute_escape_distance_map((sx, sy))
 
         obs = {
             "grid": H,
@@ -465,8 +466,8 @@ class BomberEnv(gymnasium.Env):
         grid = np.zeros((self.grid_h, self.grid_w), dtype=np.int32)
 
         # Wall and Bricks random
-        for y in range(1, self.grid_h - 1):
-            for x in range(1, self.grid_w - 1):
+        for y in range(self.grid_h):
+            for x in range(self.grid_w):
                 # 60% empty, 30% brick, 10% wall
                 r = self.rng.random()
                 if r < 0.6:
@@ -476,18 +477,15 @@ class BomberEnv(gymnasium.Env):
                 else:
                     grid[y, x] = TileType.WALL
 
-        # Outer walls
-        grid[0, :] = grid[-1, :] = grid[:, 0] = grid[:, -1] = TileType.WALL
-
         # Clear spawn points
-        spawn_points = [(1, 1), (self.grid_w - 2, self.grid_h - 2), (1, self.grid_h - 2), (self.grid_w - 2, 1)]
+        spawn_points = [(0, 0), (self.grid_w - 1, self.grid_h - 1), (0, self.grid_h - 1), (self.grid_w - 1, 0)]
         for x, y in spawn_points:
             grid[y, x] = TileType.EMPTY
             # Clear surrounding tiles to ensure agents are not trapped
             for dy in [-1, 0, 1]:
                 for dx in [-1, 0, 1]:
                     ny, nx = y + dy, x + dx
-                    if 0 < ny < self.grid_h - 1 and 0 < nx < self.grid_w - 1:
+                    if 0 <= ny < self.grid_h and 0 <= nx < self.grid_w:
                         grid[ny, nx] = TileType.EMPTY
 
         return grid
@@ -510,7 +508,6 @@ class BomberEnv(gymnasium.Env):
         for b in self.bombs:
             if not b.is_exploding_soon:
                 continue
-            # vùng ảnh hưởng theo power
             for dx, dy in EXPLOSION_DIRS:
                 for i in range(1, b.power + 1):
                     nx, ny = b.x + dx * i, b.y + dy * i
@@ -518,10 +515,44 @@ class BomberEnv(gymnasium.Env):
                         break
                     if self.map[ny, nx] == TileType.WALL:
                         break
-                    if nx == x and ny == y:
+                    if (nx, ny) == (x, y):
                         return True
                     if self.map[ny, nx] == TileType.BRICK:
                         break
+
+        # 🚨 Check trap / dead-end chỉ khi (x,y) có thể bị ảnh hưởng bởi bom
+        for b in self.bombs:
+            # kiểm tra nếu (x,y) nằm trong blast range của bomb b
+            if (b.x, b.y) == (x, y):
+                in_blast = True
+            else:
+                in_blast = False
+                for dx, dy in EXPLOSION_DIRS:
+                    for i in range(1, b.power + 1):
+                        nx, ny = b.x + dx * i, b.y + dy * i
+                        if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
+                            break
+                        if self.map[ny, nx] == TileType.WALL:
+                            break
+                        if (nx, ny) == (x, y):
+                            in_blast = True
+                            break
+                        if self.map[ny, nx] == TileType.BRICK:
+                            break
+                    if in_blast:
+                        break
+
+            if in_blast:
+                # check số lối thoát
+                free_neighbors = 0
+                for dx, dy in EXPLOSION_DIRS:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < self.grid_w and 0 <= ny < self.grid_h:
+                        if self._is_free(nx, ny):
+                            free_neighbors += 1
+                if free_neighbors <= 1:
+                    return True
+
         return False
 
     def handle_cell(self, nx, ny, bomb: Bomb, rewards: Dict[str, float]):
@@ -529,7 +560,7 @@ class BomberEnv(gymnasium.Env):
         if self.items[ny, nx] != 0:
             print(f"{self.env_id}: 💥 Item at {(nx, ny)} destroyed by bomb {bomb.owner}")
             self.items[ny, nx] = 0
-            # rewards[bomb.owner] -= 0.05  # phạt khi phá item
+            rewards[bomb.owner] -= 0.01  # phạt khi phá item
 
         # Nếu có bom khác -> chain reaction
         for other_b in list(self.bombs):  # copy để tránh modify khi iterate
@@ -551,7 +582,7 @@ class BomberEnv(gymnasium.Env):
                 if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
                     break
                 if self.map[ny, nx] == TileType.WALL:
-                    # rewards[bomb.owner] -= 0.1
+                    rewards[bomb.owner] -= 0.01
                     break
 
                 self.flames[ny, nx] = self.explosion_lifetime
@@ -574,12 +605,12 @@ class BomberEnv(gymnasium.Env):
                     if other_p.status == "alive" and (other_p.position == (nx, ny) or (other_p.position == (x, y))):
                         if self.teams[other_a] != self.teams[bomb.owner]:
                             print(f"{self.env_id}: ☠️ {other_a} hit by bomb from {bomb.owner} at {(nx, ny)}")
-                            rewards[bomb.owner] += 500.0
-                        else:
-                            print(f"{self.env_id}: ☠️ {other_a} hit by own bomb at {(nx, ny)}")
-                            rewards[bomb.owner] -= 20.0
+                            rewards[bomb.owner] += 20.0
+                        # else:
+                        #     print(f"{self.env_id}: ☠️ {other_a} hit by own bomb at {(nx, ny)}")
+                        #     rewards[bomb.owner] -= 20.0
 
-            rewards[bomb.owner] += (brick_destroyed ** 1.5) * 2.0
+            rewards[bomb.owner] += (brick_destroyed ** 2) * 0.1
 
         return rewards
 
@@ -588,7 +619,6 @@ class BomberEnv(gymnasium.Env):
         BFS từ agent → tính khoảng cách ngắn nhất đến ô an toàn (không trong vùng nguy hiểm).
         Luôn trả về map (H, W) trong [0, 1].
         """
-        danger = self._compute_danger_mask()
         dist = np.full((self.grid_h, self.grid_w), np.inf, dtype=np.float32)
         q = deque()
 
@@ -604,7 +634,7 @@ class BomberEnv(gymnasium.Env):
                     continue
                 if not self._is_free(nx, ny):
                     continue
-                if danger[ny, nx] > 0:  # bỏ qua ô nguy hiểm
+                if self._is_danger(nx, ny):
                     continue
 
                 if dist[ny, nx] == np.inf:
@@ -618,36 +648,6 @@ class BomberEnv(gymnasium.Env):
         # --- Normalize về [0,1] ---
         dist = dist / max_dist
         return dist.astype(np.float32)
-
-    def _compute_danger_mask(self):
-        """
-        Trả về ma trận danger (grid_h x grid_w),
-        giá trị [0,1] biểu thị mức độ nguy hiểm.
-        """
-        danger = np.zeros((self.grid_h, self.grid_w), dtype=np.float32)
-
-        # Flames hiện tại -> nguy hiểm chắc chắn
-        danger[self.flames > 0] = 1.0
-
-        # Vùng bom sắp nổ
-        for b in self.bombs:
-            if not b.is_exploding_soon:
-                continue
-            # Vị trí bom
-            danger[b.y, b.x] = 1.0
-            # Các hướng nổ
-            for dx, dy in EXPLOSION_DIRS:
-                for i in range(1, b.power + 1):
-                    nx, ny = b.x + dx * i, b.y + dy * i
-                    if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
-                        break
-                    if self.map[ny, nx] == TileType.WALL:
-                        break
-                    danger[ny, nx] = 1.0
-                    if self.map[ny, nx] == TileType.BRICK:
-                        break
-
-        return danger
 
     def render(self):
         if self.render_mode == "ansi":
