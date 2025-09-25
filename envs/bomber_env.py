@@ -73,6 +73,8 @@ class PlayerState:
     stuck_bomb_count: int
     invalid_action_count: int
     invalid_bomb_action_count: int
+    last_dist_crate: float = np.inf
+    last_dist_coin: float = np.inf
 
 
 class BomberEnv(gymnasium.Env):
@@ -212,7 +214,7 @@ class BomberEnv(gymnasium.Env):
                     player.speed = min(player.speed + 0.25, 3.5)
                 self.items[y, x] = 0
                 print(f"{self.env_id}: 🎁 {a} picked up item {item_type} at {(x, y)}")
-                rewards[a] += 1.0
+                rewards[a] += 10.0
 
         # --- Check flames / dying ---
         for a, player in self.players.items():
@@ -238,7 +240,7 @@ class BomberEnv(gymnasium.Env):
         # Survival bonus
         for a, player in self.players.items():
             if player.status == "alive":
-                rewards[a] += 0.01
+                rewards[a] += 0.5
 
         # Terminations & truncations
         terminations = {a: not self.players[a].alive for a in self.agents}
@@ -306,95 +308,55 @@ class BomberEnv(gymnasium.Env):
         x, y = player.position
         reward = 0
 
-        player.stuck_count += self.player_tick_rate
-        max_stuck_ticks = 6000 // self.tick_rate  # 6 second
-        if player.stuck_count >= max_stuck_ticks and player_name == f"player_{self.player_id}":
-            print(f"{self.env_id}: ⚠️ {player_name} seems stuck action")
-            reward -= (player.stuck_count / max_stuck_ticks)
+        # --- LOOP detection (oscillation penalty) ---
+        if move_action == player.last_action == player.second_last_action:
+            reward += -5  # LOOP
 
-        if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
-            player.stuck_bomb_count += self.player_tick_rate
+        # --- WAITED NO BOMB ---
+        if move_action == 0 and bomb_action == 0:
+            reward += -5
 
-        max_stuck_bomb_ticks = 3000 // self.tick_rate  # 3 second
-        if player.stuck_bomb_count >= max_stuck_bomb_ticks and player_name == f"player_{self.player_id}":
-            print(f"{self.env_id}: ⚠️ {player_name} seems stuck bomb")
-            reward -= (player.stuck_bomb_count / max_stuck_ticks)
-
-        # Increase agent timer
-        self.agent_timers[player_name] += 1
-
-        if bomb_action == 1:  # Place bomb
+        # --- Bomb placement ---
+        if bomb_action == 1:
             x, y = int(x), int(y)
             if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
-                # Check bricks or enemies in bomb range
-                is_senseless_bomb = True
+                # Place bomb
+                self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, player_name))
+                player.bombs_placed += 1
+                reward += -20  # BOMB DROPPED penalty
+
+                # WRONG BOMB: đặt bom mà không phá được gì
+                useless = True
                 for dx, dy in EXPLOSION_DIRS:
                     for i in range(1, player.bomb_power + 1):
                         nx, ny = x + dx * i, y + dy * i
                         if nx < 0 or nx >= self.grid_w or ny < 0 or ny >= self.grid_h:
                             break
-                        if self.map[ny, nx] == TileType.WALL:
-                            reward -= 0.05  # penalty for placing bomb towards wall
+                        if self.map[ny, nx] == TileType.BRICK or self.items[ny, nx] > 0:
+                            useless = False
                             break
-                        if self.map[ny, nx] == TileType.BRICK:
-                            reward += 0.1  # reward for targeting brick
-                            is_senseless_bomb = True
-                            break
-
-                        # Check if enemy in line of fire
-                        for other_a, other_p in self.players.items():
-                            if (
-                                other_p.alive
-                                and other_p.position == (nx, ny)
-                                and self.teams[other_a] != self.teams[player_name]
-                            ):
-                                reward += 0.5
-                                is_senseless_bomb = False
-
-                self.bombs.append(Bomb(x, y, self.bomb_fuse_ticks, player.bomb_power, player_name))
-                player.bombs_placed += 1
-                player.stuck_bomb_count = 0
-                if is_senseless_bomb:
-                    reward -= 0.1  # penalty for senseless bomb
-                else:
-                    reward += 0.01  # reward for placing bomb
+                    if not useless:
+                        break
+                if useless:
+                    reward += -10  # WRONG BOMB
             else:
-                reward -= 0.1  # penalty for invalid bomb placement
-                player.invalid_bomb_action_count += 1
+                reward += -3  # INVALID ACTION
 
-        if move_action == 0:
-            # Penalty for idling
-            reward -= 0.001
-        elif self.agent_timers[player_name] >= self.player_tick_rate or True:
-            # Move
-            if move_action in [1, 2, 3, 4]:
-                dx, dy = ACTION_TO_DIR[move_action]
-                nx, ny = x + dx, y + dy
-                if self._is_free(nx, ny):
-
-                    # Big penalty for moving and sure die
-                    if self._is_danger(nx, ny):
-                        reward -= 0.5
-                    else:
-                        reward += 0.01  # reward for moving
-                        self.agent_timers[player_name] = 0
-                        player.stuck_count = 0
-
-                        player.position = (nx, ny)
-
-                        # Small penalty for oscillating
-                        if move_action == player.last_action and move_action == player.second_last_action:
-                            reward -= 0.05
-
-                        player.second_last_action = player.last_action
-                        player.last_action = move_action
+        # --- Movement ---
+        if move_action in [1, 2, 3, 4]:
+            dx, dy = ACTION_TO_DIR[move_action]
+            nx, ny = x + dx, y + dy
+            if self._is_free(nx, ny):
+                if self._is_danger(nx, ny):
+                    reward += -10  # DANGER ZONE
                 else:
-                    reward -= 0.5 # penalty for hitting wall
-                    player.invalid_action_count += 1
-
-        # elif move_action != 0:
-        #     reward -= 0.01 # small penalty for trying to move too fast
-        #     player.invalid_action_count += 1
+                    # PERFECT MOVE (safe move)
+                    reward += 40
+                    player.position = (nx, ny)
+                    player.second_last_action = player.last_action
+                    player.last_action = move_action
+            else:
+                reward += -3  # INVALID ACTION
 
         return reward
 
@@ -560,7 +522,7 @@ class BomberEnv(gymnasium.Env):
         if self.items[ny, nx] != 0:
             print(f"{self.env_id}: 💥 Item at {(nx, ny)} destroyed by bomb {bomb.owner}")
             self.items[ny, nx] = 0
-            rewards[bomb.owner] -= 0.01  # phạt khi phá item
+            rewards[bomb.owner] -= 5  # phạt khi phá item
 
         # Nếu có bom khác -> chain reaction
         for other_b in list(self.bombs):  # copy để tránh modify khi iterate
@@ -606,11 +568,11 @@ class BomberEnv(gymnasium.Env):
                         if self.teams[other_a] != self.teams[bomb.owner]:
                             print(f"{self.env_id}: ☠️ {other_a} hit by bomb from {bomb.owner} at {(nx, ny)}")
                             rewards[bomb.owner] += 20.0
-                        else:
-                            print(f"{self.env_id}: ☠️ {other_a} hit by own bomb at {(nx, ny)}")
-                            rewards[bomb.owner] -= 20.0
+                        # else:
+                        #     print(f"{self.env_id}: ☠️ {other_a} hit by own bomb at {(nx, ny)}")
+                        #     rewards[bomb.owner] -= 20.0
 
-            rewards[bomb.owner] += (brick_destroyed ** 2) * 0.1
+            rewards[bomb.owner] += (brick_destroyed ** 2) * 5.0
 
         return rewards
 
@@ -648,6 +610,32 @@ class BomberEnv(gymnasium.Env):
         # --- Normalize về [0,1] ---
         dist = dist / max_dist
         return dist.astype(np.float32)
+
+    def _shortest_distance(self, start, targets):
+        """
+        BFS từ start -> tập targets.
+        Trả về khoảng cách ngắn nhất (int), nếu không reachable thì trả về inf.
+        """
+        if not targets:
+            return np.inf
+
+        dist = np.full((self.grid_h, self.grid_w), np.inf, dtype=np.float32)
+        q = deque()
+        sx, sy = start
+        dist[sy, sx] = 0
+        q.append((sx, sy))
+
+        while q:
+            x, y = q.popleft()
+            if (x, y) in targets:
+                return dist[y, x]
+            for dx, dy in EXPLOSION_DIRS:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < self.grid_w and 0 <= ny < self.grid_h:
+                    if dist[ny, nx] == np.inf and self._is_free(nx, ny) and not self._is_danger(nx, ny):
+                        dist[ny, nx] = dist[y, x] + 1
+                        q.append((nx, ny))
+        return np.inf
 
     def render(self):
         if self.render_mode == "ansi":
