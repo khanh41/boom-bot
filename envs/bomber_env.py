@@ -185,7 +185,7 @@ class BomberEnv(gymnasium.Env):
         # --- Bomb updates ---
         new_bombs = []
         for b in self.bombs:
-            b.timer -= 1
+            b.timer -= self.player_tick_rate
             b.is_exploding_soon = b.timer <= self.bomb_exploding_soon_ticks
             if b.timer <= 0:
                 rewards = self._explode(b, rewards)
@@ -306,14 +306,14 @@ class BomberEnv(gymnasium.Env):
         x, y = player.position
         reward = 0
 
-        player.stuck_count += 1
+        player.stuck_count += self.player_tick_rate
         max_stuck_ticks = 6000 // self.tick_rate  # 6 second
         if player.stuck_count >= max_stuck_ticks and player_name == f"player_{self.player_id}":
             print(f"{self.env_id}: ⚠️ {player_name} seems stuck action")
             reward -= (player.stuck_count / max_stuck_ticks)
 
         if player.bombs_placed < player.bomb_limit and not any(b.x == x and b.y == y for b in self.bombs):
-            player.stuck_bomb_count += 1
+            player.stuck_bomb_count += self.player_tick_rate
 
         max_stuck_bomb_ticks = 3000 // self.tick_rate  # 3 second
         if player.stuck_bomb_count >= max_stuck_bomb_ticks and player_name == f"player_{self.player_id}":
@@ -606,9 +606,9 @@ class BomberEnv(gymnasium.Env):
                         if self.teams[other_a] != self.teams[bomb.owner]:
                             print(f"{self.env_id}: ☠️ {other_a} hit by bomb from {bomb.owner} at {(nx, ny)}")
                             rewards[bomb.owner] += 20.0
-                        # else:
-                        #     print(f"{self.env_id}: ☠️ {other_a} hit by own bomb at {(nx, ny)}")
-                        #     rewards[bomb.owner] -= 20.0
+                        else:
+                            print(f"{self.env_id}: ☠️ {other_a} hit by own bomb at {(nx, ny)}")
+                            rewards[bomb.owner] -= 20.0
 
             rewards[bomb.owner] += (brick_destroyed ** 2) * 0.1
 
